@@ -40,10 +40,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
         }));
 
         if (name === 'db_type') {
-            const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLServer' | 'SQLite';
+            const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLite';
             let port = 5432;
             if (dbType === 'MySQL') port = 3306;
-            else if (dbType === 'SQLServer') port = 1433;
             else if (dbType === 'SQLite') port = 0;
             
             setConfig((prev) => ({
@@ -87,8 +86,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
                 const tempConfig = { ...config, database: 'postgres' }; // Default for connection
                 if (config.db_type === 'MySQL') {
                     tempConfig.database = 'mysql'; // MySQL default
-                } else if (config.db_type === 'SQLServer') {
-                    tempConfig.database = 'master'; // SQL Server default
                 }
 
                 const connection = await connectDatabase(tempConfig);
@@ -155,10 +152,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
         }
     };
 
-    const dbTypeOptions: Array<{ value: 'PostgreSQL' | 'MySQL' | 'SQLServer' | 'SQLite', label: string, port: number }> = [
+    const dbTypeOptions: Array<{ value: 'PostgreSQL' | 'MySQL' | 'SQLite', label: string, port: number }> = [
         { value: 'PostgreSQL', label: 'PostgreSQL', port: 5432 },
         { value: 'MySQL', label: 'MySQL', port: 3306 },
-        { value: 'SQLServer', label: 'SQL Server', port: 1433 },
         { value: 'SQLite', label: 'SQLite', port: 0 },
     ];
 

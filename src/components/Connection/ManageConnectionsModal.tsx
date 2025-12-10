@@ -78,11 +78,10 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
             };
 
             if (name === 'db_type') {
-                const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLServer' | 'SQLite';
+                const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLite';
                 updated.db_type = dbType;
                 if (dbType === 'PostgreSQL') updated.port = 5432;
                 else if (dbType === 'MySQL') updated.port = 3306;
-                else if (dbType === 'SQLServer') updated.port = 1433;
                 else if (dbType === 'SQLite') updated.port = 0;
             }
 
@@ -151,7 +150,6 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
         const colors = {
             PostgreSQL: { bg: 'rgba(50, 115, 220, 0.15)', color: '#5294e2' },
             MySQL: { bg: 'rgba(247, 150, 70, 0.15)', color: '#f79646' },
-            SQLServer: { bg: 'rgba(204, 41, 39, 0.15)', color: '#CC2927' },
             SQLite: { bg: 'rgba(15, 128, 204, 0.15)', color: '#0F80CC' },
         };
         const style = colors[dbType as keyof typeof colors] || { bg: 'var(--bg-elevated)', color: 'var(--text-muted)' };
@@ -425,20 +423,6 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
                                             <DatabaseIcon dbType="MySQL" size={20} />
                                         </span>
                                         <span className="db-type-label">MySQL</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className={`db-type-option ${editConfig?.db_type === 'SQLServer' ? 'active' : ''}`}
-                                        onClick={() => setEditConfig(prev => prev ? {
-                                            ...prev,
-                                            db_type: 'SQLServer',
-                                            port: 1433
-                                        } : prev)}
-                                    >
-                                        <span className="db-type-icon">
-                                            <DatabaseIcon dbType="SQLServer" size={20} />
-                                        </span>
-                                        <span className="db-type-label">SQL Server</span>
                                     </button>
                                     <button
                                         type="button"
