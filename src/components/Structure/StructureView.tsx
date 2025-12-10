@@ -102,7 +102,9 @@ export const StructureView: React.FC<StructureViewProps> = ({ connectionId, tabl
                                 <td style={{ padding: '12px 16px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                         {col.is_primary_key && (
-                                            <Key size={14} style={{ color: 'var(--warning)', flexShrink: 0 }} title="Primary Key" />
+                                            <div title="Primary Key">
+                                                <Key size={14} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                                            </div>
                                         )}
                                         <span style={{ 
                                             fontWeight: 500, 
