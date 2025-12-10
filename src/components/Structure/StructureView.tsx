@@ -87,27 +87,31 @@ export const StructureView: React.FC<StructureViewProps> = ({ connectionId, tabl
             </div>
 
             <div className="structure-content" style={{ flex: 1, overflow: 'auto', padding: '0' }}>
-                <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', borderSpacing: 0 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-secondary)', zIndex: 1 }}>
                         <tr>
-                            <th style={{ textAlign: 'left', padding: '8px 16px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)' }}>Column Name</th>
-                            <th style={{ textAlign: 'left', padding: '8px 16px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)' }}>Data Type</th>
-                            <th style={{ textAlign: 'center', padding: '8px 16px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)' }}>Nullable</th>
-                            <th style={{ textAlign: 'center', padding: '8px 16px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)' }}>Default</th>
-                            <th style={{ textAlign: 'left', padding: '8px 16px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, minWidth: '200px', borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)' }}>Constraints</th>
+                            <th style={{ textAlign: 'left', padding: '12px 16px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)' }}>Column</th>
+                            <th style={{ textAlign: 'left', padding: '12px 16px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)' }}>Type</th>
+                            <th style={{ textAlign: 'left', padding: '12px 16px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)' }}>Attributes</th>
+                            <th style={{ textAlign: 'left', padding: '12px 16px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 600, borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)', minWidth: '200px' }}>Constraints</th>
                         </tr>
                     </thead>
                     <tbody>
                         {structure.columns.map((col: ColumnInfo, idx: number) => (
-                            <tr key={idx} style={{ borderBottom: idx < structure.columns.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
-                                <td style={{ padding: '12px 16px', fontWeight: 500 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        {col.is_primary_key ? (
-                                            <div title="Primary Key" style={{ color: 'var(--warning)', display: 'flex' }}><Key size={14} /></div>
-                                        ) : (
-                                            <div style={{ width: 14 }} />
+                            <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                <td style={{ padding: '12px 16px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        {col.is_primary_key && (
+                                            <Key size={14} style={{ color: 'var(--warning)', flexShrink: 0 }} title="Primary Key" />
                                         )}
-                                        <span style={{ color: 'var(--text-primary)' }}>{col.name}</span>
+                                        <span style={{ 
+                                            fontWeight: 500, 
+                                            color: 'var(--text-primary)',
+                                            fontFamily: 'monospace',
+                                            fontSize: '13px'
+                                        }}>
+                                            {col.name}
+                                        </span>
                                     </div>
                                 </td>
                                 <td style={{ padding: '12px 16px' }}>
@@ -119,40 +123,76 @@ export const StructureView: React.FC<StructureViewProps> = ({ connectionId, tabl
                                         {col.data_type}
                                     </span>
                                 </td>
-                                <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                                    {col.is_nullable && (
-                                        <div style={{
-                                            width: '8px',
-                                            height: '8px',
-                                            borderRadius: '50%',
-                                            background: 'var(--success)',
-                                            margin: '0 auto',
-                                            opacity: 0.8
-                                        }} title="Nullable" />
-                                    )}
-                                </td>
-                                <td style={{ padding: '12px 16px', textAlign: 'center', fontFamily: 'monospace', color: 'var(--text-secondary)', fontSize: '12px' }}>
-                                    {col.default_value !== null ? col.default_value : <span style={{ color: 'var(--text-muted)', opacity: 0.3 }}>-</span>}
+                                <td style={{ padding: '12px 16px' }}>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                                        {col.is_nullable && (
+                                            <span style={{
+                                                fontSize: '10px',
+                                                background: 'rgba(34, 197, 94, 0.15)',
+                                                color: 'var(--success)',
+                                                padding: '3px 6px',
+                                                borderRadius: '3px',
+                                                fontWeight: 600
+                                            }}>
+                                                NULL
+                                            </span>
+                                        )}
+                                        {!col.is_nullable && (
+                                            <span style={{
+                                                fontSize: '10px',
+                                                background: 'rgba(239, 68, 68, 0.15)',
+                                                color: 'var(--error)',
+                                                padding: '3px 6px',
+                                                borderRadius: '3px',
+                                                fontWeight: 600
+                                            }}>
+                                                NOT NULL
+                                            </span>
+                                        )}
+                                        {col.default_value !== null && (
+                                            <span style={{
+                                                fontSize: '10px',
+                                                background: 'var(--bg-elevated)',
+                                                color: 'var(--text-secondary)',
+                                                padding: '3px 6px',
+                                                borderRadius: '3px',
+                                                fontFamily: 'monospace',
+                                                maxWidth: '150px',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                                display: 'inline-block'
+                                            }} title={`Default: ${col.default_value}`}>
+                                                = {col.default_value}
+                                            </span>
+                                        )}
+                                    </div>
                                 </td>
                                 <td style={{ padding: '12px 16px' }}>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                                         {col.is_primary_key && (
-                                            <span style={{ fontSize: '10px', background: 'var(--warning)', color: 'var(--bg-primary)', padding: '2px 6px', borderRadius: '3px', fontWeight: 600 }}>PRIMARY KEY</span>
+                                            <span style={{ fontSize: '10px', background: 'var(--warning)', color: '#000', padding: '3px 7px', borderRadius: '3px', fontWeight: 700 }}>PK</span>
                                         )}
                                         {col.is_unique && (
-                                            <span style={{ fontSize: '10px', background: 'var(--accent-primary)', color: 'var(--bg-primary)', padding: '2px 6px', borderRadius: '3px', fontWeight: 600 }}>UNIQUE</span>
+                                            <span style={{ fontSize: '10px', background: 'var(--accent-primary)', color: 'white', padding: '3px 7px', borderRadius: '3px', fontWeight: 700 }}>UNIQUE</span>
                                         )}
                                         {col.is_foreign_key && col.foreign_key_table && (
-                                            <span style={{ fontSize: '10px', background: 'var(--info)', color: 'var(--bg-primary)', padding: '2px 6px', borderRadius: '3px', fontWeight: 600 }} title={`References ${col.foreign_key_table}(${col.foreign_key_column || 'id'})`}>FK → {col.foreign_key_table}</span>
+                                            <span style={{ fontSize: '10px', background: 'var(--info)', color: 'white', padding: '3px 7px', borderRadius: '3px', fontWeight: 700 }} title={`References ${col.foreign_key_table}(${col.foreign_key_column || 'id'})`}>
+                                                FK → {col.foreign_key_table}
+                                            </span>
                                         )}
                                         {col.is_auto_increment && (
-                                            <span style={{ fontSize: '10px', background: 'var(--success)', color: 'var(--bg-primary)', padding: '2px 6px', borderRadius: '3px', fontWeight: 600 }}>AUTO INCREMENT</span>
+                                            <span style={{ fontSize: '10px', background: 'var(--success)', color: 'white', padding: '3px 7px', borderRadius: '3px', fontWeight: 700 }}>AUTO_INC</span>
                                         )}
                                         {col.max_length && (
-                                            <span style={{ fontSize: '10px', background: 'var(--bg-elevated)', color: 'var(--text-muted)', padding: '2px 6px', borderRadius: '3px', fontWeight: 500 }}>MAX: {col.max_length}</span>
+                                            <span style={{ fontSize: '10px', background: 'var(--bg-elevated)', color: 'var(--text-muted)', padding: '3px 7px', borderRadius: '3px', fontWeight: 600, border: '1px solid var(--border-color)' }}>
+                                                {col.max_length}
+                                            </span>
                                         )}
                                         {col.check_constraint && (
-                                            <span style={{ fontSize: '10px', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', padding: '2px 6px', borderRadius: '3px', fontWeight: 500 }} title={col.check_constraint}>CHECK</span>
+                                            <span style={{ fontSize: '10px', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', padding: '3px 7px', borderRadius: '3px', fontWeight: 600, border: '1px solid var(--border-color)' }} title={col.check_constraint}>
+                                                CHECK
+                                            </span>
                                         )}
                                     </div>
                                 </td>

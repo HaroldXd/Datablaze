@@ -1105,7 +1105,7 @@ CREATE TABLE new_table (
                         {activeTab?.result ? `${activeTab.result.execution_time_ms}ms` : 'Ready'}
                     </div>
                     <div className="status-item" style={{ marginLeft: 'auto' }}>
-                        Datablaze v0.1.0
+                        Datablaze v0.2.0
                     </div>
                 </div>
             </main >

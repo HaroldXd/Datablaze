@@ -811,9 +811,10 @@ button,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: background-color 0.15s ease;
 }
 
-.data-table tr:hover td {
+.data-table tbody tr:hover td {
   background: var(--bg-hover);
 }
 
