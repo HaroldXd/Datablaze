@@ -52,12 +52,26 @@ pub async fn get_tables(
     id: String,
     state: State<'_, ConnectionManager>,
 ) -> Result<Vec<TableInfo>, String> {
+    log::info!("[get_tables] Called for connection id: {}", id);
+    
     let conn = state
         .get_connection(&id)
         .await
-        .ok_or_else(|| "Connection not found".to_string())?;
+        .ok_or_else(|| {
+            log::error!("[get_tables] Connection not found: {}", id);
+            "Connection not found".to_string()
+        })?;
     
-    crate::database::get_tables_list(&conn).await
+    log::info!("[get_tables] Connection found, fetching tables...");
+    
+    let result = crate::database::get_tables_list(&conn).await;
+    
+    match &result {
+        Ok(tables) => log::info!("[get_tables] Success: {} tables found", tables.len()),
+        Err(e) => log::error!("[get_tables] Error: {}", e),
+    }
+    
+    result
 }
 
 #[tauri::command]

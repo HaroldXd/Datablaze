@@ -5,11 +5,12 @@ export interface DatabaseType {
   PostgreSQL?: {};
   MySQL?: {};
   SQLite?: {};
+  SQLServer?: {};
 }
 
 export interface ConnectionConfig {
   name: string;
-  db_type: 'PostgreSQL' | 'MySQL' | 'SQLite';
+  db_type: 'PostgreSQL' | 'MySQL' | 'SQLite' | 'SQLServer';
   host: string;
   port: number;
   database: string;
@@ -35,6 +36,13 @@ export interface ColumnInfo {
   is_nullable: boolean;
   is_primary_key: boolean;
   default_value: string | null;
+  is_unique?: boolean;
+  is_foreign_key?: boolean;
+  foreign_key_table?: string;
+  foreign_key_column?: string;
+  is_auto_increment?: boolean;
+  max_length?: number;
+  check_constraint?: string;
 }
 
 export interface TableStructure {

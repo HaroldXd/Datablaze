@@ -4,6 +4,7 @@ import { useConnectionStore } from '../../stores/connectionStore';
 import { getTables, disconnectDatabase, connectDatabase, listDatabases, executeQuery, getTableStructure } from '../../lib/tauri';
 import { SavedConnection } from '../../lib/storage';
 import { Modal } from '../UI/Modal';
+import { DatabaseIcon } from '../UI/DatabaseIcon';
 
 interface DatabaseTreeProps {
     onTableDataRequest: (table: string) => void;
@@ -59,6 +60,7 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
     const [loadingTableStructure, setLoadingTableStructure] = useState<string | null>(null);
 
     const prevActiveConnectionIdRef = React.useRef<string | null>(null);
+    const latestDbSelectRequest = React.useRef<string>('');
 
     // Sync expandedDatabases with active connection ONLY when it changes
     useEffect(() => {
@@ -86,12 +88,17 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
             return;
         }
 
+        // Generate a unique request ID to prevent race conditions
+        const requestId = Date.now().toString() + '_' + dbName;
+        latestDbSelectRequest.current = requestId;
+
         const oldConnectionId = activeConnectionId;
 
         // Find root saved connection to get clean name
         const rootSaved = savedConnections.find(s =>
             s.config.host === activeConn.config.host &&
-            s.config.port === activeConn.config.port
+            s.config.port === activeConn.config.port &&
+            s.config.db_type === activeConn.config.db_type
         );
         const baseName = rootSaved ? (rootSaved.config.name || 'Server') : 'Server';
 
@@ -102,21 +109,26 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
             name: `${baseName} / ${dbName}`
         };
 
-        // UI Optimistic Update: Set loading state but don't clear tables yet if possible,
-        // or clear them only for the new view.
-        // Actually, we want to look fast.
         setLoadingDatabases(true);
+        console.log('[DatabaseTree] Selecting database:', dbName, 'requestId:', requestId);
 
         try {
-            // Strings: Connect NEW first (Overlap method) to prevent UI flicker (No disconnected state)
             const connection = await connectDatabase(newConfig);
 
-            // 1. Add new connection to store
+            // Check if this is still the latest request
+            if (latestDbSelectRequest.current !== requestId) {
+                console.log('[DatabaseTree] Stale request, aborting:', requestId);
+                // Cleanup the connection we just made
+                try {
+                    await disconnectDatabase(connection.id);
+                } catch { /* ignore */ }
+                return;
+            }
+
+            // 1. Add new connection to store (don't persist - it's just a child of the main connection)
             addConnection(connection, false);
 
-            // 2. Switch Active ID immediately (The atomic switch)
-            // This prevents the UI from rendering "nothing selected" or "disconnected"
-            // The old connection is still in the store but not active.
+            // 2. Switch Active ID immediately
             setActiveConnection(connection.id);
 
             // 3. Cleanup Old Connection
@@ -125,31 +137,35 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                 removeConnection(oldConnectionId);
             } catch (cleanupErr) {
                 console.warn('Failed to clean up old connection:', cleanupErr);
-                // Non-fatal, just log
             }
 
-            // 4. Load Data for new connection
-            // We can do this in parallel or sequence
+            // 4. Load tables for new connection
             const fetchedTables = await getTables(connection.id);
-            setTables(fetchedTables);
 
-            // Reload database list just in case (optional, but good for consistency)
-            // We can pass the new ID to ensure it loads for the correct context
-            loadDatabases(connection.id);
+            // Final check before updating UI
+            if (latestDbSelectRequest.current !== requestId) {
+                console.log('[DatabaseTree] Stale request after tables, aborting:', requestId);
+                return;
+            }
+
+            setTables(fetchedTables);
 
             // Ensure the new DB node is expanded
             setExpandedDatabases(prev => new Set(prev).add(dbName));
 
         } catch (err) {
             console.error('Failed to connect to database:', err);
-            setAlertModal({
-                isOpen: true,
-                title: 'Connection Failed',
-                message: 'Failed to connect to database: ' + err
-            });
-            // If failed, we are still on the old connection, so no UI state triggers needed.
+            if (latestDbSelectRequest.current === requestId) {
+                setAlertModal({
+                    isOpen: true,
+                    title: 'Connection Failed',
+                    message: 'Failed to connect to database: ' + err
+                });
+            }
         } finally {
-            setLoadingDatabases(false);
+            if (latestDbSelectRequest.current === requestId) {
+                setLoadingDatabases(false);
+            }
         }
     };
 
@@ -196,10 +212,26 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
     useEffect(() => {
         if (activeConnectionId) {
             const activeConn = connections.find(c => c.id === activeConnectionId);
+            console.log('[DatabaseTree] Active connection:', {
+                id: activeConnectionId,
+                db_type: activeConn?.config.db_type,
+                database: activeConn?.config.database,
+                hasDatabase: !!activeConn?.config.database
+            });
+
             // If connected without specific database, load database list
             if (activeConn && !activeConn.config.database) {
+                console.log('[DatabaseTree] Loading databases for', activeConn.config.db_type);
+                loadDatabases(activeConnectionId);
+            } else if (activeConn && activeConn.config.database) {
+                // Connected to a specific database - keep the list if it's from the same server
+                // We need to reload the database list for this server
+                console.log('[DatabaseTree] Connected to specific database, reloading list');
                 loadDatabases(activeConnectionId);
             }
+        } else {
+            // No active connection - clear everything
+            setAvailableDatabases([]);
         }
     }, [activeConnectionId, connections]);
 
@@ -213,7 +245,8 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
         const activeConn = connections.find(c => c.id === activeConnectionId);
         const isConnected = activeConn &&
             activeConn.config.host === savedConn.config.host &&
-            activeConn.config.port === savedConn.config.port;
+            activeConn.config.port === savedConn.config.port &&
+            activeConn.config.db_type === savedConn.config.db_type;
 
         const newExpanded = new Set(expandedConnections);
 
@@ -228,9 +261,11 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
         } else {
             // Not connected? Connect automatically!
             // Delegate to handleReconnect logic
-            // We pass a mock event or handle logic manually
-            if (savedConn.config.password) {
-                // Auto-connect with saved password
+            // SQLite doesn't need password, so always allow connection for SQLite
+            const hasCredentialsOrNotNeeded = savedConn.config.password || savedConn.config.db_type === 'SQLite';
+
+            if (hasCredentialsOrNotNeeded) {
+                // Auto-connect with saved password (or no password for SQLite)
                 setReconnecting(savedConn.id);
                 try {
                     const connection = await connectDatabase(savedConn.config);
@@ -396,7 +431,11 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
 
     const handleSelectTop100 = () => {
         if (!contextMenu || !activeConnectionId) return;
-        const sql = `SELECT * FROM ${contextMenu.table} LIMIT 100;`;
+        const activeConn = connections.find(c => c.id === activeConnectionId);
+        const isSqlServer = activeConn?.config.db_type === 'SQLServer';
+        const sql = isSqlServer 
+            ? `SELECT TOP 100 * FROM ${contextMenu.table};`
+            : `SELECT * FROM ${contextMenu.table} LIMIT 100;`;
         addQueryTab();
         setTimeout(() => {
             const tabs = useConnectionStore.getState().queryTabs;
@@ -529,9 +568,16 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
 
     // Render Logic for Databases Folder
     const renderDatabasesFolder = (activeDbName: string | undefined) => {
+        // If we have a list of available databases, show them
+        const hasDbList = loadingDatabases || availableDatabases.length > 0;
+
+        // If no database list but we have an active database with tables, show tables directly
+        const hasDirectConnection = !hasDbList && activeDbName && tables.length > 0;
+
         return (
             <div className="tree-node-children">
-                {(loadingDatabases || availableDatabases.length > 0) && (
+                {/* Case 1: Show database list when available */}
+                {hasDbList && (
                     <div className="tree-node">
                         <div
                             className="tree-node-content"
@@ -551,8 +597,6 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                             {availableDatabases.map(db => {
                                 const isActive = activeDbName === db;
                                 const isExpanded = expandedDatabases.has(db);
-                                // If active, it is effectively "expanded" in terms of connection
-                                // But let's clarify the UI: Clicking row -> Selects & Expands.
                                 return (
                                     <div key={db}>
                                         <div
@@ -560,74 +604,22 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                                             style={{ paddingLeft: '32px', cursor: 'pointer' }}
                                             onClick={() => handleSelectDatabase(db)}
                                         >
-                                            {/* Dropdown Toggle */}
                                             <div
                                                 className="node-toggle"
                                                 onClick={(e) => toggleDatabaseExpansion(db, e)}
                                             >
                                                 {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                                             </div>
-
                                             <Database size={14} className="node-icon" color={isActive ? 'var(--accent-primary)' : 'var(--text-muted)'} />
                                             <span className="node-label" style={{ color: isActive ? 'var(--accent-primary)' : 'inherit' }}>
                                                 {db}
                                             </span>
                                             {isActive && <div className="active-indicator" />}
                                         </div>
-
-                                        {/* If Active, Show Schemas/Tables HERE */}
-                                        {isExpanded && (
-                                            <div className="tree-node-children">
-                                                {Object.keys(tablesBySchema).length === 0 ? (
-                                                    <div style={{ padding: '8px 16px', paddingLeft: '64px', color: 'var(--text-muted)', fontSize: '11px', fontStyle: 'italic' }}>
-                                                        {loadingTableStructure ? 'Loading tables...' : 'No tables found'}
-                                                    </div>
-                                                ) : (
-                                                    Object.entries(tablesBySchema).map(([schema, schemaTables]) => (
-                                                        <div key={schema}>
-                                                            <div
-                                                                className="tree-node-content"
-                                                                onClick={() => toggleSchema(schema)}
-                                                                style={{ paddingLeft: '64px' }}
-                                                            >
-                                                                <div className="node-toggle" style={{ transform: 'scale(0.8)' }}>
-                                                                    {expandedSchemas.has(schema) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                                                </div>
-                                                                <Layers size={14} className="node-icon" color="var(--text-muted)" />
-                                                                <span className="node-label">{schema}</span>
-                                                            </div>
-
-                                                            {expandedSchemas.has(schema) && (
-                                                                <div className="tree-node-children">
-                                                                    {schemaTables.map((table) => (
-                                                                        <div key={table.name} className="tree-node">
-                                                                            <div
-                                                                                className="tree-node-content"
-                                                                                onClick={() => handleTableClick(table.name)}
-                                                                                onContextMenu={(e) => handleContextMenu(e, table.name)}
-                                                                                style={{ paddingLeft: '80px' }}
-                                                                            >
-                                                                                <div
-                                                                                    className="node-toggle"
-                                                                                    onClick={(e) => toggleTableExpansion(table.name, e)}
-                                                                                    style={{ opacity: 0.5, transform: 'scale(0.8)' }}
-                                                                                >
-                                                                                    {expandedTables.has(table.name) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                                                                </div>
-                                                                                <TableIcon size={14} className="node-icon" />
-                                                                                <span className="node-label" title={table.name}>{table.name}</span>
-                                                                            </div>
-                                                                            {/* Table Structure (Columns) */}
-                                                                            <div style={{ paddingLeft: '80px' }}>
-                                                                                {renderTableColumns(table.name)}
-                                                                            </div>
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    ))
-                                                )}
+                                        {isExpanded && isActive && renderTablesContent('64px')}
+                                        {isExpanded && !isActive && (
+                                            <div style={{ padding: '8px 16px', paddingLeft: '64px', color: 'var(--text-muted)', fontSize: '11px', fontStyle: 'italic' }}>
+                                                Click to connect and load tables
                                             </div>
                                         )}
                                     </div>
@@ -635,6 +627,75 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                             })}
                         </div>
                     </div>
+                )}
+
+                {/* Case 2: Direct connection - show tables directly under connection */}
+                {hasDirectConnection && renderTablesContent('32px')}
+
+                {/* Case 3: No databases and no tables */}
+                {!hasDbList && !hasDirectConnection && !loadingDatabases && (
+                    <div style={{ padding: '8px 16px', paddingLeft: '32px', color: 'var(--text-muted)', fontSize: '11px', fontStyle: 'italic' }}>
+                        {tables.length === 0 ? 'No tables found' : 'Loading...'}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // Helper function to render tables content
+    const renderTablesContent = (basePadding: string) => {
+        const paddingNum = parseInt(basePadding);
+
+        return (
+            <div className="tree-node-children">
+                {Object.keys(tablesBySchema).length === 0 ? (
+                    <div style={{ padding: '8px 16px', paddingLeft: basePadding, color: 'var(--text-muted)', fontSize: '11px', fontStyle: 'italic' }}>
+                        {loadingTableStructure ? 'Loading tables...' : 'No tables found'}
+                    </div>
+                ) : (
+                    Object.entries(tablesBySchema).map(([schema, schemaTables]) => (
+                        <div key={schema}>
+                            <div
+                                className="tree-node-content"
+                                onClick={() => toggleSchema(schema)}
+                                style={{ paddingLeft: basePadding }}
+                            >
+                                <div className="node-toggle" style={{ transform: 'scale(0.8)' }}>
+                                    {expandedSchemas.has(schema) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                </div>
+                                <Layers size={14} className="node-icon" color="var(--text-muted)" />
+                                <span className="node-label">{schema}</span>
+                            </div>
+
+                            {expandedSchemas.has(schema) && (
+                                <div className="tree-node-children">
+                                    {schemaTables.map((table) => (
+                                        <div key={table.name} className="tree-node">
+                                            <div
+                                                className="tree-node-content"
+                                                onClick={() => handleTableClick(table.name)}
+                                                onContextMenu={(e) => handleContextMenu(e, table.name)}
+                                                style={{ paddingLeft: `${paddingNum + 16}px` }}
+                                            >
+                                                <div
+                                                    className="node-toggle"
+                                                    onClick={(e) => toggleTableExpansion(table.name, e)}
+                                                    style={{ opacity: 0.5, transform: 'scale(0.8)' }}
+                                                >
+                                                    {expandedTables.has(table.name) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                                </div>
+                                                <TableIcon size={14} className="node-icon" />
+                                                <span className="node-label" title={table.name}>{table.name}</span>
+                                            </div>
+                                            <div style={{ paddingLeft: `${paddingNum + 16}px` }}>
+                                                {renderTableColumns(table.name)}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))
                 )}
             </div>
         );
@@ -690,9 +751,11 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                 {/* Render Saved Connections as the Root Nodes */}
                 {savedConnections.map(conn => {
                     const activeConn = connections.find(c => c.id === activeConnectionId);
+                    // Include db_type in comparison to prevent cross-contamination between different database types
                     const isRelated = activeConn &&
                         activeConn.config.host === conn.config.host &&
-                        activeConn.config.port === conn.config.port;
+                        activeConn.config.port === conn.config.port &&
+                        activeConn.config.db_type === conn.config.db_type;
 
                     const isNodeActive = isRelated;
 
@@ -709,9 +772,7 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                                     {reconnecting === conn.id ? (
                                         <RefreshCw size={14} className="animate-spin" />
                                     ) : (
-                                        <div className="db-logo small">
-                                            {conn.config.db_type === 'PostgreSQL' ? 'PG' : 'MY'}
-                                        </div>
+                                        <DatabaseIcon dbType={conn.config.db_type} size={18} />
                                     )}
                                 </div>
                                 <span className="node-label">

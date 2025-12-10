@@ -5,6 +5,7 @@ pub enum DatabaseType {
     PostgreSQL,
     MySQL,
     SQLite,
+    SQLServer,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +40,20 @@ pub struct ColumnInfo {
     pub is_nullable: bool,
     pub is_primary_key: bool,
     pub default_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_unique: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_foreign_key: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub foreign_key_table: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub foreign_key_column: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_auto_increment: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_constraint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,22 +87,35 @@ pub struct TestConnectionResult {
 
 impl ConnectionConfig {
     pub fn connection_string(&self) -> String {
+        // URL-encode username and password for special characters
+        let encoded_username = urlencoding::encode(&self.username);
+        let encoded_password = urlencoding::encode(&self.password);
+        
         match self.db_type {
             DatabaseType::PostgreSQL => {
                 format!(
                     "postgres://{}:{}@{}:{}/{}",
-                    self.username, self.password, self.host, self.port, self.database
+                    encoded_username, encoded_password, self.host, self.port, self.database
                 )
             }
             DatabaseType::MySQL => {
                 format!(
                     "mysql://{}:{}@{}:{}/{}",
-                    self.username, self.password, self.host, self.port, self.database
+                    encoded_username, encoded_password, self.host, self.port, self.database
                 )
             }
             DatabaseType::SQLite => {
-                // SQLite uses file path as database
-                self.database.clone()
+                // SQLite uses file path as database with proper URI format
+                // This allows creating the file if it doesn't exist
+                format!("sqlite:{}?mode=rwc", self.database)
+            }
+            DatabaseType::SQLServer => {
+                // SQL Server connection string format for Tiberius
+                // Format: server=host;port=port;database=db;user=user;password=pass
+                format!(
+                    "server=tcp:{},{};database={};user={};password={};TrustServerCertificate=true",
+                    self.host, self.port, self.database, self.username, self.password
+                )
             }
         }
     }

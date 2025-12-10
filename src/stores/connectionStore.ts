@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Connection, TableInfo } from '../lib/tauri';
+import { Connection, TableInfo, QueryResult } from '../lib/tauri';
 import { getSavedConnections, saveConnection, removeSavedConnection, SavedConnection, cleanupDuplicates, getSavedQueries, saveQuery, removeSavedQuery, SavedQuery } from '../lib/storage';
 
 interface QueryTab {
@@ -9,6 +9,9 @@ interface QueryTab {
     connectionId: string | null;
     type?: 'query' | 'structure';
     tableName?: string;
+    result?: QueryResult | null;
+    isExecuting?: boolean;
+    error?: string | null;
 }
 
 interface ConnectionState {
@@ -40,9 +43,95 @@ interface ConnectionState {
     addSavedQuery: (name: string, sql: string) => void;
     deleteSavedQuery: (id: string) => void;
     addStructureTab: (tableName: string) => void;
+    updateTabResult: (id: string, result: QueryResult | null, isExecuting: boolean, error: string | null) => void;
 }
 
 let tabCounter = 1;
+
+// Helper function to generate tab title from SQL
+function generateTabTitle(sql: string): string {
+    const trimmed = sql.trim().toUpperCase();
+    
+    if (!trimmed) return `Query ${tabCounter}`;
+    
+    // SELECT queries
+    if (trimmed.startsWith('SELECT')) {
+        // Extract table name from "SELECT ... FROM table_name"
+        const fromMatch = sql.match(/FROM\s+([\w.]+)/i);
+        if (fromMatch) {
+            const tableName = fromMatch[1].split('.').pop(); // Handle schema.table
+            return `SELECT ${tableName}`;
+        }
+        return 'SELECT';
+    }
+    
+    // INSERT queries
+    if (trimmed.startsWith('INSERT')) {
+        const intoMatch = sql.match(/INTO\s+([\w.]+)/i);
+        if (intoMatch) {
+            const tableName = intoMatch[1].split('.').pop();
+            return `INSERT ${tableName}`;
+        }
+        return 'INSERT';
+    }
+    
+    // UPDATE queries
+    if (trimmed.startsWith('UPDATE')) {
+        const updateMatch = sql.match(/UPDATE\s+([\w.]+)/i);
+        if (updateMatch) {
+            const tableName = updateMatch[1].split('.').pop();
+            return `UPDATE ${tableName}`;
+        }
+        return 'UPDATE';
+    }
+    
+    // DELETE queries
+    if (trimmed.startsWith('DELETE')) {
+        const fromMatch = sql.match(/FROM\s+([\w.]+)/i);
+        if (fromMatch) {
+            const tableName = fromMatch[1].split('.').pop();
+            return `DELETE ${tableName}`;
+        }
+        return 'DELETE';
+    }
+    
+    // CREATE queries
+    if (trimmed.startsWith('CREATE')) {
+        if (trimmed.includes('TABLE')) {
+            const tableMatch = sql.match(/TABLE\s+([\w.]+)/i);
+            if (tableMatch) {
+                const tableName = tableMatch[1].split('.').pop();
+                return `CREATE ${tableName}`;
+            }
+            return 'CREATE TABLE';
+        }
+        return 'CREATE';
+    }
+    
+    // DROP queries
+    if (trimmed.startsWith('DROP')) {
+        const dropMatch = sql.match(/DROP\s+\w+\s+([\w.]+)/i);
+        if (dropMatch) {
+            const tableName = dropMatch[1].split('.').pop();
+            return `DROP ${tableName}`;
+        }
+        return 'DROP';
+    }
+    
+    // ALTER queries
+    if (trimmed.startsWith('ALTER')) {
+        const alterMatch = sql.match(/ALTER\s+\w+\s+([\w.]+)/i);
+        if (alterMatch) {
+            const tableName = alterMatch[1].split('.').pop();
+            return `ALTER ${tableName}`;
+        }
+        return 'ALTER';
+    }
+    
+    // Default to first word of query
+    const firstWord = trimmed.split(/\s+/)[0];
+    return firstWord.length > 15 ? firstWord.substring(0, 15) + '...' : firstWord;
+}
 
 export const useConnectionStore = create<ConnectionState>((set) => ({
     connections: [],
@@ -160,7 +249,15 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
 
     updateTabSql: (id, sql) =>
         set((state) => ({
-            queryTabs: state.queryTabs.map((t) => (t.id === id ? { ...t, sql } : t)),
+            queryTabs: state.queryTabs.map((t) => {
+                if (t.id === id) {
+                    // Only update title if it's a generic "Query N" title or if SQL changes significantly
+                    const shouldUpdateTitle = t.title.match(/^Query \d+$/) || !t.sql.trim();
+                    const newTitle = shouldUpdateTitle ? generateTabTitle(sql) : t.title;
+                    return { ...t, sql, title: newTitle };
+                }
+                return t;
+            }),
         })),
 
     updateTabConnection: (id, connectionId) =>
@@ -187,4 +284,11 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
             activeTabId: newTab.id,
         }));
     },
+
+    updateTabResult: (id, result, isExecuting, error) =>
+        set((state) => ({
+            queryTabs: state.queryTabs.map((t) => 
+                t.id === id ? { ...t, result, isExecuting, error } : t
+            ),
+        })),
 }));

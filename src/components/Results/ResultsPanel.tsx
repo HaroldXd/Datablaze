@@ -40,19 +40,49 @@ function pluralize(word: string): string {
 }
 
 // Detect if a column is likely a foreign key based on naming conventions
-function isForeignKeyColumn(columnName: string): string | null {
+// Returns the actual table name if it exists in the database
+function isForeignKeyColumn(columnName: string, tables?: TableInfo[]): string | null {
     const lower = columnName.toLowerCase();
+    
+    if (!tables || tables.length === 0) return null;
+    
+    const tableNames = tables.map(t => t.name.toLowerCase());
+    
     // Common patterns: user_id, userId, category_id, etc.
     if (lower.endsWith('_id') && lower !== 'id') {
-        // Extract table name: "user_id" -> "users", "item_category_id" -> "item_categories"
-        const tableName = lower.replace(/_id$/, '');
-        return pluralize(tableName);
+        // Extract table name: "user_id" -> "users", "client_id" -> "clients"
+        const baseName = lower.replace(/_id$/, '');
+        const pluralName = pluralize(baseName);
+        
+        // Try multiple variations and check if they exist
+        const variations = [
+            pluralName,           // users, clients
+            baseName,             // user, client
+            `${baseName}s`,       // explicit plural
+        ];
+        
+        for (const variant of variations) {
+            if (tableNames.includes(variant)) {
+                // Return the actual table name with correct casing
+                return tables.find(t => t.name.toLowerCase() === variant)?.name || null;
+            }
+        }
     }
+    
     if (lower.endsWith('id') && lower.length > 2 && lower !== 'id') {
-        // camelCase: userId -> users
-        const tableName = lower.replace(/id$/i, '');
-        return pluralize(tableName);
+        // camelCase: userId -> users, clientId -> clients
+        const baseName = lower.replace(/id$/i, '');
+        const pluralName = pluralize(baseName);
+        
+        const variations = [pluralName, baseName, `${baseName}s`];
+        
+        for (const variant of variations) {
+            if (tableNames.includes(variant)) {
+                return tables.find(t => t.name.toLowerCase() === variant)?.name || null;
+            }
+        }
     }
+    
     return null;
 }
 
@@ -122,13 +152,14 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
     // Close context menu on global click or custom event
     useEffect(() => {
         const handleClickOutside = () => setCellContextMenu(null);
+        const handleCloseContextMenus = () => setCellContextMenu(null);
         if (cellContextMenu) {
             document.addEventListener('click', handleClickOutside);
-            window.addEventListener('close-context-menus', handleClickOutside);
+            window.addEventListener('close-context-menus', handleCloseContextMenus);
         }
         return () => {
             document.removeEventListener('click', handleClickOutside);
-            window.removeEventListener('close-context-menus', handleClickOutside);
+            window.removeEventListener('close-context-menus', handleCloseContextMenus);
         };
     }, [cellContextMenu]);
 
@@ -168,6 +199,30 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                 <p className="empty-state-text">
                     Click on a table in the sidebar, or write a SQL query
                 </p>
+            </div>
+        );
+    }
+
+    // Check for empty results (query executed but returned 0 rows)
+    if (result.row_count === 0) {
+        return (
+            <div className="empty-state">
+                <div style={{
+                    padding: '24px',
+                    background: 'var(--bg-secondary)',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    textAlign: 'center'
+                }}>
+                    <Table size={40} color="var(--text-muted)" style={{ marginBottom: '12px', opacity: 0.5 }} />
+                    <p className="empty-state-title" style={{ marginBottom: '8px' }}>No results found</p>
+                    <p className="empty-state-text" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        The query executed successfully but returned no rows
+                    </p>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
+                        Execution time: {result.execution_time_ms}ms
+                    </p>
+                </div>
             </div>
         );
     }
@@ -304,62 +359,80 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
         return sortConfig.direction === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />;
     };
 
-    // Resolve FK table name using actual tables list
-    const resolveTableName = (guessedTable: string): string => {
-        if (!tables || tables.length === 0) return guessedTable;
-
-        const tableNames = tables.map(t => t.name.toLowerCase());
-        const guess = guessedTable.toLowerCase();
-
-        // 1. Exact match
-        if (tableNames.includes(guess)) return guess;
-
-        // 2. Try singular version
-        let singular = guess;
-        if (guess.endsWith('ies')) {
-            singular = guess.slice(0, -3) + 'y';
-        } else if (guess.endsWith('es')) {
-            singular = guess.slice(0, -2);
-        } else if (guess.endsWith('s')) {
-            singular = guess.slice(0, -1);
-        }
-        if (singular !== guess && tableNames.includes(singular)) return singular;
-
-        // 3. Find table that ends with the guessed name
-        const endsWithMatch = tableNames.find(t => t.endsWith('_' + guess) || t.endsWith(guess));
-        if (endsWithMatch) return endsWithMatch;
-
-        // 4. Find table that ends with singular version
-        const endsWithSingular = tableNames.find(t => t.endsWith('_' + singular) || t.endsWith(singular));
-        if (endsWithSingular) return endsWithSingular;
-
-        return guessedTable;
-    };
-
     const renderCellValue = (col: string, value: any, rowIndex: number) => {
         // Check if this cell is being edited
         if (editingCell && editingCell.rowIndex === rowIndex && editingCell.colKey === col) {
+            // Determine the input type based on column type from result
+            const colInfo = result?.columns.find(c => c.name === col);
+            const dataType = colInfo?.type_name?.toLowerCase() || '';
+            
+            // Determine input type and attributes based on data type
+            let inputType = 'text';
+            let inputProps: any = {};
+            
+            if (dataType.includes('int') || dataType.includes('serial') || dataType.includes('bigint')) {
+                inputType = 'number';
+                inputProps.step = '1';
+            } else if (dataType.includes('decimal') || dataType.includes('numeric') || dataType.includes('float') || dataType.includes('double') || dataType.includes('real')) {
+                inputType = 'number';
+                inputProps.step = 'any';
+            } else if (dataType.includes('bool') || dataType.includes('bit')) {
+                // Render checkbox for boolean
+                return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <input
+                            autoFocus
+                            type="checkbox"
+                            className="cell-editor"
+                            defaultChecked={value === true || value === 1 || value === '1' || value === 't' || value === 'true'}
+                            onClick={(e) => e.stopPropagation()}
+                            id={`edit-input-${rowIndex}-${col}`}
+                            style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                        />
+                        <button
+                            className="edit-action-btn btn-success"
+                            title="Confirm"
+                            onMouseDown={(e) => {
+                                e.preventDefault();
+                                const input = document.getElementById(`edit-input-${rowIndex}-${col}`) as HTMLInputElement;
+                                if (input) handleSaveEdit(input.checked ? 'true' : 'false');
+                            }}
+                            style={{ padding: '4px', height: '24px', width: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px' }}
+                        >
+                            <Check size={14} />
+                        </button>
+                        <button
+                            className="edit-action-btn btn-danger"
+                            title="Discard"
+                            onMouseDown={(e) => {
+                                e.preventDefault();
+                                setEditingCell(null);
+                            }}
+                            style={{ padding: '4px', height: '24px', width: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px' }}
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
+                );
+            } else if (dataType.includes('date') && !dataType.includes('datetime') && !dataType.includes('timestamp')) {
+                inputType = 'date';
+            } else if (dataType.includes('time') && !dataType.includes('datetime') && !dataType.includes('timestamp')) {
+                inputType = 'time';
+            } else if (dataType.includes('datetime') || dataType.includes('timestamp')) {
+                inputType = 'datetime-local';
+            }
+            
             return (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <input
                         autoFocus
+                        type={inputType}
                         className="cell-editor"
-                        defaultValue={String(value)}
+                        defaultValue={value !== null ? String(value) : ''}
+                        {...inputProps}
                         onBlur={(e) => {
                             // Don't auto-save on blur if clicking the buttons
                             if (e.relatedTarget && (e.relatedTarget as HTMLElement).closest('.edit-action-btn')) return;
-                            // Optional: auto-save on blur, or just cancel? User asked for explicit confirm.
-                            // Let's keep it safe and just cancel if they click away without confirming, OR auto-save.
-                            // Given "confirme o descarte", let's assume strict actions, but auto-save on blur is standard UX.
-                            // I'll make it so you MUST click check or hit enter to save, otherwise blur might be ambiguous.
-                            // Actually, standard grid behavior is save on blur. But let's stick to the requested explicit mode.
-                            // If I don't save on blur, I should probably cancel or keep editing.
-                            // Let's try to keep focus if possible or just close (cancel).
-                            // For this iteration: Blur = Cancel (safest for "explicit" request).
-                            // But that might be annoying. Let's do: Blur -> Save (Standard) but provide buttons.
-                            // Wait, the user said "se seleccione se edite y luego se confirme o se descarte".
-                            // I will rely on the buttons/keys.
-                            // setEditingCell(null); // This would cancel.
                         }}
                         onKeyDown={(e) => {
                             if (e.key === 'Enter') handleSaveEdit(e.currentTarget.value);
@@ -507,7 +580,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
             );
         }
 
-        const fkTable = isForeignKeyColumn(col);
+        const fkTable = isForeignKeyColumn(col, tables);
         if (fkTable && onNavigateToTable) {
             return (
                 <span
@@ -654,7 +727,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                 <div className="results-info">
                     {result.row_count} rows • {result.execution_time_ms}ms
                     {result.truncated && (
-                        <span style={{ color: 'var(--warning)', marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }} title="Result limited to 2000 rows to prevent freezing. Use LIMIT in your query to control this.">
+                        <span style={{ color: 'var(--warning)', marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }} title="Result limited to 2000 rows to prevent freezing. Use LIMIT (MySQL/PostgreSQL/SQLite) or TOP (SQL Server) in your query to control this.">
                             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--warning)' }}></span>
                             Truncated
                         </span>
@@ -683,8 +756,8 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                                         </span>
                                     </th>
                                     {result.columns.map((col, i) => {
-                                        const fkTable = isForeignKeyColumn(col.name);
-                                        const resolvedFkTable = fkTable ? resolveTableName(fkTable) : null;
+                                        const fkTable = isForeignKeyColumn(col.name, tables);
+                                        const resolvedFkTable = fkTable;
                                         return (
                                             <th key={i} onClick={() => handleSort(col.name)} className="sortable-th" style={{ padding: '8px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)', borderRight: '1px solid var(--border-color)', position: 'sticky', top: 0, zIndex: 10 }}>
                                                 <div className="th-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
@@ -760,7 +833,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                                             <span style={{ marginLeft: '6px', fontSize: '10px', color: 'var(--text-muted)', fontWeight: 'normal' }}>
                                                 {col.type_name}
                                             </span>
-                                            {isForeignKeyColumn(col.name) && <ExternalLink size={10} style={{ marginLeft: '4px', opacity: 0.4, display: 'inline' }} />}
+                                            {isForeignKeyColumn(col.name, tables) && <ExternalLink size={10} style={{ marginLeft: '4px', opacity: 0.4, display: 'inline' }} />}
                                         </div>
                                         <div className="record-value">
                                             {renderCellValue(col.name, row[col.name], i)}

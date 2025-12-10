@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { X, Database, Trash2, Edit3, Plus, Check, XCircle, Loader2, Server, ExternalLink } from 'lucide-react';
+import { X, Database, Trash2, Edit3, Plus, Check, XCircle, Loader2, Server, ExternalLink, FolderOpen } from 'lucide-react';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { SavedConnection, updateSavedConnection } from '../../lib/storage';
 import { ConnectionConfig, testConnection, connectDatabase, getTables } from '../../lib/tauri';
 import { DatabaseIcon } from '../UI/DatabaseIcon';
+import { open } from '@tauri-apps/plugin-dialog';
 
 interface ManageConnectionsModalProps {
     isOpen: boolean;
@@ -78,11 +79,12 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
             };
 
             if (name === 'db_type') {
-                const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLite';
+                const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLite' | 'SQLServer';
                 updated.db_type = dbType;
                 if (dbType === 'PostgreSQL') updated.port = 5432;
                 else if (dbType === 'MySQL') updated.port = 3306;
                 else if (dbType === 'SQLite') updated.port = 0;
+                else if (dbType === 'SQLServer') updated.port = 1433;
             }
 
             return updated;
@@ -151,6 +153,7 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
             PostgreSQL: { bg: 'rgba(50, 115, 220, 0.15)', color: '#5294e2' },
             MySQL: { bg: 'rgba(247, 150, 70, 0.15)', color: '#f79646' },
             SQLite: { bg: 'rgba(15, 128, 204, 0.15)', color: '#0F80CC' },
+            SQLServer: { bg: 'rgba(204, 41, 39, 0.15)', color: '#CC2927' },
         };
         const style = colors[dbType as keyof typeof colors] || { bg: 'var(--bg-elevated)', color: 'var(--text-muted)' };
 
@@ -438,6 +441,20 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
                                         </span>
                                         <span className="db-type-label">SQLite</span>
                                     </button>
+                                    <button
+                                        type="button"
+                                        className={`db-type-option ${editConfig?.db_type === 'SQLServer' ? 'active' : ''}`}
+                                        onClick={() => setEditConfig(prev => prev ? {
+                                            ...prev,
+                                            db_type: 'SQLServer',
+                                            port: 1433
+                                        } : prev)}
+                                    >
+                                        <span className="db-type-icon">
+                                            <DatabaseIcon dbType="SQLServer" size={20} />
+                                        </span>
+                                        <span className="db-type-label">SQL Server</span>
+                                    </button>
                                 </div>
                             </div>
 
@@ -487,21 +504,68 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
                                 </div>
                             </div>
 
-                            {/* Database Name */}
+                            {/* Database Name / File Path */}
                             <div className="form-group">
                                 <label className="form-label">
                                     <Database size={14} />
-                                    Database Name
-                                    <span className="form-hint optional">Leave empty to see available databases</span>
+                                    {editConfig?.db_type === 'SQLite' ? 'Database File' : 'Database Name'}
+                                    {editConfig?.db_type !== 'SQLite' && (
+                                        <span className="form-hint optional">
+                                            Optional - leave empty to browse all databases
+                                        </span>
+                                    )}
                                 </label>
-                                <input
-                                    type="text"
-                                    name="database"
-                                    className="form-input"
-                                    placeholder="my_database (optional)"
-                                    value={editConfig?.database || ''}
-                                    onChange={handleConfigChange}
-                                />
+                                {editConfig?.db_type === 'SQLite' ? (
+                                    <div className="form-row" style={{ gap: '8px' }}>
+                                        <input
+                                            type="text"
+                                            name="database"
+                                            className="form-input"
+                                            placeholder="Select or enter database file path..."
+                                            value={editConfig?.database || ''}
+                                            onChange={handleConfigChange}
+                                            style={{ flex: 1 }}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            onClick={async () => {
+                                                try {
+                                                    const selected = await open({
+                                                        multiple: false,
+                                                        filters: [{
+                                                            name: 'SQLite Database',
+                                                            extensions: ['db', 'sqlite', 'sqlite3', 'db3']
+                                                        }, {
+                                                            name: 'All Files',
+                                                            extensions: ['*']
+                                                        }]
+                                                    });
+                                                    if (selected && typeof selected === 'string') {
+                                                        setEditConfig(prev => prev ? { ...prev, database: selected } : prev);
+                                                    }
+                                                } catch (err) {
+                                                    console.error('Failed to open file dialog:', err);
+                                                }
+                                            }}
+                                            style={{ whiteSpace: 'nowrap' }}
+                                        >
+                                            <FolderOpen size={16} />
+                                            Browse
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <input
+                                        type="text"
+                                        name="database"
+                                        className="form-input"
+                                        placeholder={editConfig?.db_type === 'SQLServer'
+                                            ? "Leave empty to list all databases"
+                                            : "my_database (optional)"}
+                                        value={editConfig?.database || ''}
+                                        onChange={handleConfigChange}
+                                    />
+                                )}
                             </div>
 
                             {/* Credentials */}

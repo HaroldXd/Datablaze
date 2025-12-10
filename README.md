@@ -33,27 +33,58 @@
 - **PostgreSQL** - Full support with schema browsing
 - **MySQL** - Complete compatibility with all MySQL features
 - **SQLite** - Lightweight file-based database support
+- **SQL Server** - Microsoft SQL Server support with native syntax (TOP vs LIMIT)
 - Easy connection management with saved credentials
+- Automatic SQL syntax adaptation per database engine
 
 ### 🎨 **Beautiful Interface**
 - Modern, sleek dark and light themes
 - Custom frameless window with native controls
 - Responsive sidebar with table tree explorer
-- Monaco-powered SQL editor with syntax highlighting
+- Monaco-powered SQL editor with syntax highlighting and auto-completion
+- Context menus for quick actions
 
 ### ⚡ **Performance First**
 - Built with Rust backend for maximum speed
 - Streaming query results for large datasets
 - Smart result truncation (2000 row limit) to prevent UI freezes
 - Lazy loading for Base64 images
+- Independent tab execution - each tab maintains its own results
 
 ### 🛠️ **Developer Experience**
-- Multi-tab query support
-- Save and organize your frequently used queries
-- One-click table data preview
-- JSON/Card/Table view modes for results
-- Copy results as CSV or JSON
-- Foreign key navigation with sidebar drill-down
+- **Smart Multi-tab System**
+  - Each tab preserves its own query and results
+  - Intelligent tab naming based on SQL content (e.g., "SELECT users", "UPDATE bookings")
+  - Right-click tab menu: Close tabs to right, Close other tabs, Close all, Force close all
+  - Middle-click to close tabs
+  - Auto-creates new tabs when exploring tables
+- **Advanced Query Editor**
+  - SQL syntax highlighting
+  - Auto-completion for tables, columns, and SQL keywords
+  - Execute with Ctrl+Enter
+  - Save frequently used queries
+- **Smart Result Views**
+  - Table, JSON, and Card view modes
+  - Inline cell editing with type-aware inputs (numbers, dates, booleans, text)
+  - Copy cells, rows, or entire results as CSV/JSON
+  - Foreign key detection and navigation
+  - Sort results by any column
+- **Table Structure View**
+  - View column definitions, data types, and constraints
+  - Visual badges for PRIMARY KEY, UNIQUE, FOREIGN KEY, AUTO INCREMENT
+  - See default values and nullable status
+  - Understand table relationships at a glance
+
+### 🔍 **Smart Features**
+- **Foreign Key Navigation**: Click on FK values to explore related data in sidebar
+- **Intelligent FK Detection**: Only shows FK links for tables that actually exist
+- **Type-aware Editing**: 
+  - Number inputs for integers and decimals
+  - Date/time pickers for temporal fields
+  - Checkboxes for booleans
+  - Text inputs for strings
+- **Context Menus**: Right-click on tabs, tables, and cells for quick actions
+- **Auto-closing menus**: Only one context menu visible at a time
 
 ### 🔒 **Security**
 - Local-first: your data never leaves your machine
@@ -70,7 +101,7 @@ Download the latest release for your platform:
 
 | Platform | Download |
 |----------|----------|
-| Windows  | [📦 Datablaze_0.1.0_x64_en-US.msi](https://github.com/HaroldXd/Datablaze/releases/download/v0.1.0/Datablaze_0.1.0_x64_en-US.msi) |
+| Windows  | [📦 Datablaze_0.2.0_x64_en-US.msi](https://github.com/HaroldXd/Datablaze/releases/download/v0.2.0/Datablaze_0.2.0_x64_en-US.msi) |
 | macOS    | Coming soon |
 | Linux    | Coming soon |
 
@@ -100,10 +131,10 @@ npm run tauri build
 1. Click the **connection selector** in the sidebar
 2. Click **"Add connection"**
 3. Fill in your database details:
-   - Database type (PostgreSQL/MySQL/SQLite)
-   - For PostgreSQL/MySQL: Host, Port, Username, Password
+   - Database type (PostgreSQL/MySQL/SQLite/SQL Server)
+   - For PostgreSQL/MySQL/SQL Server: Host, Port, Username, Password
    - For SQLite: Database file path
-   - Database name (optional for PostgreSQL/MySQL - you can browse all databases)
+   - Database name (optional for PostgreSQL/MySQL/SQL Server - you can browse all databases)
 4. Click **Connect**
 
 ### Querying Data
@@ -131,7 +162,7 @@ npm run tauri build
 | **Frontend** | React 19, TypeScript, Zustand |
 | **Editor** | Monaco Editor |
 | **Backend** | Rust, Tauri 2.0 |
-| **Database Drivers** | SQLx (PostgreSQL, MySQL, SQLite) |
+| **Database Drivers** | SQLx (PostgreSQL, MySQL, SQLite), Tiberius (SQL Server) |
 | **Styling** | Custom CSS with CSS Variables |
 | **Build** | Vite, Cargo |
 
@@ -156,7 +187,7 @@ datablaze/
 │   └── App.tsx            # Main application
 ├── src-tauri/             # Rust backend
 │   ├── src/
-│   │   ├── database/      # Database drivers (postgres, mysql)
+│   │   ├── database/      # Database drivers (postgres, mysql, sqlite, sqlserver)
 │   │   ├── lib.rs         # Tauri commands
 │   │   └── models.rs      # Data structures
 │   └── Cargo.toml
@@ -214,6 +245,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [Tauri](https://tauri.app/) - For the amazing framework
 - [SQLx](https://github.com/launchbadge/sqlx) - Async SQL toolkit for Rust
+- [Tiberius](https://github.com/prisma/tiberius) - SQL Server driver for Rust
 - [Monaco Editor](https://microsoft.github.io/monaco-editor/) - VS Code's editor
 - [Lucide Icons](https://lucide.dev/) - Beautiful icons
 

@@ -104,6 +104,13 @@ pub async fn get_table_structure(pool: &MySqlPool, table: &str) -> Result<TableS
             is_nullable: row.get::<String, _>("is_nullable") == "YES",
             is_primary_key: row.get::<String, _>("column_key") == "PRI",
             default_value: row.get("column_default"),
+            is_unique: None,
+            is_foreign_key: None,
+            foreign_key_table: None,
+            foreign_key_column: None,
+            is_auto_increment: None,
+            max_length: None,
+            check_constraint: None,
         })
         .collect();
     

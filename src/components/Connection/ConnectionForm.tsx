@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { ConnectionConfig, testConnection, connectDatabase, getTables, listDatabases } from '../../lib/tauri';
+import { ConnectionConfig, testConnection, connectDatabase, getTables } from '../../lib/tauri';
 import { useConnectionStore } from '../../stores/connectionStore';
-import { Database, Loader2, CheckCircle, XCircle, Server, User, Lock, HelpCircle } from 'lucide-react';
+import { Database, Loader2, CheckCircle, XCircle, Server, User, Lock, HelpCircle, FolderOpen } from 'lucide-react';
 import { DatabaseIcon } from '../UI/DatabaseIcon';
+import { open } from '@tauri-apps/plugin-dialog';
 
 interface ConnectionFormProps {
     onConnect?: () => void;
@@ -27,10 +28,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
     const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
     const [connecting, setConnectingLocal] = useState(false);
     const [showAdvanced, setShowAdvanced] = useState(false);
-    const [showDatabaseSelector, setShowDatabaseSelector] = useState(false);
-    const [availableDatabases, setAvailableDatabases] = useState<string[]>([]);
-    const [loadingDatabases, setLoadingDatabases] = useState(false);
-    const [tempConnectionId, setTempConnectionId] = useState<string | null>(null);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -40,16 +37,41 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
         }));
 
         if (name === 'db_type') {
-            const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLite';
+            const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLite' | 'SQLServer';
             let port = 5432;
             if (dbType === 'MySQL') port = 3306;
             else if (dbType === 'SQLite') port = 0;
-            
+            else if (dbType === 'SQLServer') port = 1433;
+
             setConfig((prev) => ({
                 ...prev,
                 db_type: dbType,
                 port,
             }));
+        }
+    };
+
+    const handleSelectFile = async () => {
+        try {
+            const selected = await open({
+                multiple: false,
+                filters: [{
+                    name: 'SQLite Database',
+                    extensions: ['db', 'sqlite', 'sqlite3', 'db3']
+                }, {
+                    name: 'All Files',
+                    extensions: ['*']
+                }]
+            });
+
+            if (selected && typeof selected === 'string') {
+                setConfig(prev => ({
+                    ...prev,
+                    database: selected
+                }));
+            }
+        } catch (err) {
+            console.error('Failed to open file dialog:', err);
         }
     };
 
@@ -73,7 +95,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
         setError(null);
 
         try {
-            // If no database is specified, connect and show database selector
+            // If no database is specified, connect and show available databases in the tree
             if (!config.database || config.database.trim() === '') {
                 // SQLite doesn't need database selection, it needs a file path
                 if (config.db_type === 'SQLite') {
@@ -82,27 +104,30 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
                     setConnecting(false);
                     return;
                 }
-                
-                const tempConfig = { ...config, database: 'postgres' }; // Default for connection
+
+                // Connect to the default system database for listing purposes
+                const tempConfig = { ...config, database: 'postgres' }; // Default for PostgreSQL
                 if (config.db_type === 'MySQL') {
                     tempConfig.database = 'mysql'; // MySQL default
+                } else if (config.db_type === 'SQLServer') {
+                    tempConfig.database = 'master'; // SQL Server default
                 }
 
                 const connection = await connectDatabase(tempConfig);
-                setTempConnectionId(connection.id);
 
-                // Load available databases
-                setLoadingDatabases(true);
-                try {
-                    const databases = await listDatabases(connection.id);
-                    setAvailableDatabases(databases);
-                    setShowDatabaseSelector(true);
-                } catch (err) {
-                    console.error('Failed to list databases:', err);
-                    setError('Failed to list available databases');
-                } finally {
-                    setLoadingDatabases(false);
-                }
+                // Save the connection but with EMPTY database in config
+                // This way the tree will load and show the available databases
+                const savedConfig = { ...config, database: '' };
+                const connectionWithEmptyDb = {
+                    ...connection,
+                    config: savedConfig
+                };
+
+                addConnection(connectionWithEmptyDb, true);
+
+                // Close the modal - the tree will now show available databases
+                if (onConnect) onConnect();
+                else if (onClose) onClose();
             } else {
                 // Normal connection with specified database
                 const connection = await connectDatabase(config);
@@ -123,39 +148,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
         }
     };
 
-    const handleSelectDatabase = async (database: string) => {
-        if (!tempConnectionId) return;
-
-        setConnectingLocal(true);
-        setConnecting(true);
-        setError(null);
-
-        try {
-            // Connect to the selected database
-            const newConfig = { ...config, database };
-            const connection = await connectDatabase(newConfig);
-
-            addConnection(connection, true);
-
-            // Fetch tables
-            const tables = await getTables(connection.id);
-            setTables(tables);
-
-            setShowDatabaseSelector(false);
-            if (onConnect) onConnect();
-            else if (onClose) onClose();
-        } catch (err) {
-            setError(String(err));
-        } finally {
-            setConnectingLocal(false);
-            setConnecting(false);
-        }
-    };
-
-    const dbTypeOptions: Array<{ value: 'PostgreSQL' | 'MySQL' | 'SQLite', label: string, port: number }> = [
+    const dbTypeOptions: Array<{ value: 'PostgreSQL' | 'MySQL' | 'SQLite' | 'SQLServer', label: string, port: number }> = [
         { value: 'PostgreSQL', label: 'PostgreSQL', port: 5432 },
         { value: 'MySQL', label: 'MySQL', port: 3306 },
         { value: 'SQLite', label: 'SQLite', port: 0 },
+        { value: 'SQLServer', label: 'SQL Server', port: 1433 },
     ];
 
     return (
@@ -200,85 +197,118 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
                 />
             </div>
 
-            {/* Server Details */}
-            <div className="form-section">
-                <label className="form-label">
-                    <Server size={14} />
-                    Server Details
-                </label>
-                <div className="form-row">
-                    <div className="form-group flex-2">
-                        <input
-                            type="text"
-                            name="host"
-                            className="form-input"
-                            placeholder="localhost or IP address"
-                            value={config.host}
-                            onChange={handleChange}
-                        />
-                    </div>
-                    <div className="form-group flex-1">
-                        <input
-                            type="number"
-                            name="port"
-                            className="form-input"
-                            placeholder="Port"
-                            value={config.port}
-                            onChange={handleChange}
-                        />
-                    </div>
-                </div>
-            </div>
-
-            {/* Database Name */}
-            <div className="form-group">
-                <label className="form-label">
-                    <Database size={14} />
-                    Database Name
-                    <span className="form-hint optional">Leave empty to see available databases</span>
-                </label>
-                <input
-                    type="text"
-                    name="database"
-                    className="form-input"
-                    placeholder="my_database (optional)"
-                    value={config.database}
-                    onChange={handleChange}
-                />
-            </div>
-
-            {/* Credentials */}
-            <div className="form-section">
-                <label className="form-label">
-                    <User size={14} />
-                    Authentication
-                </label>
-                <div className="form-row">
-                    <div className="form-group flex-1">
-                        <input
-                            type="text"
-                            name="username"
-                            className="form-input"
-                            placeholder="Username"
-                            value={config.username}
-                            onChange={handleChange}
-                        />
-                    </div>
-                    <div className="form-group flex-1">
-                        <div className="input-with-icon">
-                            <Lock size={14} className="input-icon" />
+            {/* Server Details - Not needed for SQLite */}
+            {config.db_type !== 'SQLite' && (
+                <div className="form-section">
+                    <label className="form-label">
+                        <Server size={14} />
+                        Server Details
+                    </label>
+                    <div className="form-row">
+                        <div className="form-group flex-2">
                             <input
-                                type="password"
-                                name="password"
+                                type="text"
+                                name="host"
                                 className="form-input"
-                                placeholder="Password"
-                                value={config.password}
+                                placeholder="localhost or IP address"
+                                value={config.host}
+                                onChange={handleChange}
+                            />
+                        </div>
+                        <div className="form-group flex-1">
+                            <input
+                                type="number"
+                                name="port"
+                                className="form-input"
+                                placeholder="Port"
+                                value={config.port}
                                 onChange={handleChange}
                             />
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Database Name / File Path */}
+            <div className="form-group">
+                <label className="form-label">
+                    <Database size={14} />
+                    {config.db_type === 'SQLite' ? 'Database File' : 'Database Name'}
+                    {config.db_type !== 'SQLite' && (
+                        <span className="form-hint optional">
+                            Optional - leave empty to browse all databases
+                        </span>
+                    )}
+                </label>
+                {config.db_type === 'SQLite' ? (
+                    <div className="form-row" style={{ gap: '8px' }}>
+                        <input
+                            type="text"
+                            name="database"
+                            className="form-input"
+                            placeholder="Select or enter database file path..."
+                            value={config.database}
+                            onChange={handleChange}
+                            style={{ flex: 1 }}
+                        />
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={handleSelectFile}
+                            style={{ whiteSpace: 'nowrap' }}
+                        >
+                            <FolderOpen size={16} />
+                            Browse
+                        </button>
+                    </div>
+                ) : (
+                    <input
+                        type="text"
+                        name="database"
+                        className="form-input"
+                        placeholder={config.db_type === 'SQLServer'
+                            ? "Leave empty to list all databases"
+                            : "my_database (optional)"}
+                        value={config.database}
+                        onChange={handleChange}
+                    />
+                )}
             </div>
+
+            {/* Credentials - Not needed for SQLite */}
+            {config.db_type !== 'SQLite' && (
+                <div className="form-section">
+                    <label className="form-label">
+                        <User size={14} />
+                        Authentication
+                    </label>
+                    <div className="form-row">
+                        <div className="form-group flex-1">
+                            <input
+                                type="text"
+                                name="username"
+                                className="form-input"
+                                placeholder="Username"
+                                value={config.username}
+                                onChange={handleChange}
+                            />
+                        </div>
+                        <div className="form-group flex-1">
+                            <div className="input-with-icon">
+                                <Lock size={14} className="input-icon" />
+                                <input
+                                    type="password"
+                                    name="password"
+                                    className="form-input"
+                                    placeholder="Password"
+                                    value={config.password}
+                                    onChange={handleChange}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Advanced Options Toggle */}
             <button
@@ -310,107 +340,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
                 </div>
             )}
 
-            {/* Database Selector Modal */}
-            {showDatabaseSelector && (
-                <div className="database-selector-panel" style={{
-                    marginTop: '16px',
-                    padding: '16px',
-                    background: 'var(--bg-elevated)',
-                    borderRadius: '8px',
-                    border: '1px solid var(--border-color)'
-                }}>
-                    <h3 style={{
-                        marginBottom: '12px',
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                    }}>
-                        <DatabaseIcon dbType={config.db_type} size={20} />
-                        Select a Database
-                    </h3>
 
-                    {loadingDatabases ? (
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: '24px',
-                            gap: '8px'
-                        }}>
-                            <Loader2 size={20} className="animate-spin" />
-                            <span style={{ color: 'var(--text-muted)' }}>Loading databases...</span>
-                        </div>
-                    ) : availableDatabases.length === 0 ? (
-                        <div style={{
-                            textAlign: 'center',
-                            padding: '24px',
-                            color: 'var(--text-muted)'
-                        }}>
-                            No databases found
-                        </div>
-                    ) : (
-                        <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                            gap: '8px',
-                            maxHeight: '300px',
-                            overflowY: 'auto'
-                        }}>
-                            {availableDatabases.map((db) => (
-                                <button
-                                    key={db}
-                                    type="button"
-                                    className="database-option"
-                                    onClick={() => handleSelectDatabase(db)}
-                                    disabled={connecting}
-                                    style={{
-                                        padding: '12px',
-                                        background: 'var(--bg-secondary)',
-                                        border: '1px solid var(--border-color)',
-                                        borderRadius: '6px',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.2s ease',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px',
-                                        fontSize: '13px',
-                                        fontWeight: 500,
-                                        textAlign: 'left'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        e.currentTarget.style.background = 'var(--accent-primary)';
-                                        e.currentTarget.style.borderColor = 'var(--accent-primary)';
-                                        e.currentTarget.style.color = 'white';
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        e.currentTarget.style.background = 'var(--bg-secondary)';
-                                        e.currentTarget.style.borderColor = 'var(--border-color)';
-                                        e.currentTarget.style.color = '';
-                                    }}
-                                >
-                                    <Database size={16} />
-                                    {db}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-
-                    <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => {
-                            setShowDatabaseSelector(false);
-                            setAvailableDatabases([]);
-                            setTempConnectionId(null);
-                        }}
-                        style={{ marginTop: '12px', width: '100%' }}
-                    >
-                        Cancel
-                    </button>
-                </div>
-            )}
 
             {/* Actions */}
             <div className="form-actions">

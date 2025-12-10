@@ -104,6 +104,13 @@ pub async fn get_table_structure(pool: &SqlitePool, table: &str) -> Result<Table
             is_nullable: row.get::<i32, _>("notnull") == 0,
             is_primary_key: row.get::<i32, _>("pk") > 0,
             default_value: row.get("dflt_value"),
+            is_unique: None,
+            is_foreign_key: None,
+            foreign_key_table: None,
+            foreign_key_column: None,
+            is_auto_increment: None,
+            max_length: None,
+            check_constraint: None,
         })
         .collect();
     

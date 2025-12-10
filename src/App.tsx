@@ -33,6 +33,7 @@ import { SavedQueriesModal } from './components/SavedQueries/SavedQueriesModal';
 import { ManageConnectionsModal } from './components/Connection/ManageConnectionsModal';
 import { StructureView } from './components/Structure/StructureView';
 import { TitleBar } from './components/UI/TitleBar';
+import { DatabaseIcon } from './components/UI/DatabaseIcon';
 
 import './index.css';
 
@@ -66,13 +67,11 @@ function App() {
         loadSavedQueries,
         addSavedQuery,
         deleteSavedQuery,
+        updateTabResult,
     } = useConnectionStore();
 
     const [showConnectionModal, setShowConnectionModal] = useState(false);
     const [isDarkMode, setIsDarkMode] = useState(true);
-    const [result, setResult] = useState<QueryResult | null>(null);
-    const [isExecuting, setIsExecuting] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [editorHeight, setEditorHeight] = useState(300);
     const [leftSidebarWidth, setLeftSidebarWidth] = useState(280);
     const [tableFilter, setTableFilter] = useState('');
@@ -120,6 +119,9 @@ function App() {
 
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+    
+    // Tab context menu state
+    const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: typeof queryTabs[0] } | null>(null);
 
     const handleRefreshSchema = async () => {
         if (!activeConnectionId || isRefreshing) return;
@@ -167,6 +169,83 @@ CREATE TABLE new_table (
 
     const handleToggleSortOrder = () => {
         setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    };
+
+    // Tab context menu handlers
+    const handleCloseTabsToRight = (tabId: string) => {
+        const tabIndex = queryTabs.findIndex(t => t.id === tabId);
+        if (tabIndex === -1) return;
+        
+        const tabsToClose = queryTabs.slice(tabIndex + 1);
+        const hasUnsavedContent = tabsToClose.some(t => t.sql.trim());
+        
+        if (hasUnsavedContent) {
+            setConfirmDialog({
+                isOpen: true,
+                title: 'Close Tabs',
+                message: `Close ${tabsToClose.length} tabs to the right? Some have unsaved content.`,
+                confirmText: 'Close',
+                cancelText: 'Cancel',
+                variant: 'warning',
+                onConfirm: () => {
+                    tabsToClose.forEach(t => removeQueryTab(t.id));
+                    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                },
+            });
+        } else {
+            tabsToClose.forEach(t => removeQueryTab(t.id));
+        }
+        setTabContextMenu(null);
+    };
+    
+    const handleCloseOtherTabs = (tabId: string) => {
+        const tabsToClose = queryTabs.filter(t => t.id !== tabId);
+        const hasUnsavedContent = tabsToClose.some(t => t.sql.trim());
+        
+        if (hasUnsavedContent) {
+            setConfirmDialog({
+                isOpen: true,
+                title: 'Close Other Tabs',
+                message: `Close ${tabsToClose.length} other tabs? Some have unsaved content.`,
+                confirmText: 'Close',
+                cancelText: 'Cancel',
+                variant: 'warning',
+                onConfirm: () => {
+                    tabsToClose.forEach(t => removeQueryTab(t.id));
+                    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                },
+            });
+        } else {
+            tabsToClose.forEach(t => removeQueryTab(t.id));
+        }
+        setTabContextMenu(null);
+    };
+    
+    const handleCloseAllTabs = () => {
+        const hasUnsavedContent = queryTabs.some(t => t.sql.trim());
+        
+        if (hasUnsavedContent) {
+            setConfirmDialog({
+                isOpen: true,
+                title: 'Close All Tabs',
+                message: `Close all ${queryTabs.length} tabs? Some have unsaved content.`,
+                confirmText: 'Close All',
+                cancelText: 'Cancel',
+                variant: 'warning',
+                onConfirm: () => {
+                    queryTabs.forEach(t => removeQueryTab(t.id));
+                    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                },
+            });
+        } else {
+            queryTabs.forEach(t => removeQueryTab(t.id));
+        }
+        setTabContextMenu(null);
+    };
+    
+    const handleForceCloseAllTabs = () => {
+        queryTabs.forEach(t => removeQueryTab(t.id));
+        setTabContextMenu(null);
     };
 
     // Close tab with confirmation if it has content
@@ -334,6 +413,44 @@ CREATE TABLE new_table (
 
     const closeFkSidebar = () => {
         setFkStack([]);
+        latestFkRequestId.current = null; // Invalidate any pending FK requests
+    };
+
+    // Close FK sidebar when changing tabs
+    useEffect(() => {
+        closeFkSidebar();
+    }, [activeTabId]);
+    
+    // Close tab context menu on click outside or when other menus open
+    useEffect(() => {
+        const handleClick = () => setTabContextMenu(null);
+        const handleCloseContextMenus = () => setTabContextMenu(null);
+        if (tabContextMenu) {
+            document.addEventListener('click', handleClick);
+            window.addEventListener('close-context-menus', handleCloseContextMenus);
+        }
+        return () => {
+            document.removeEventListener('click', handleClick);
+            window.removeEventListener('close-context-menus', handleCloseContextMenus);
+        };
+    }, [tabContextMenu]);
+
+    // Helper to get SQL syntax based on database type
+    const getSelectAllSql = (table: string, limit: number): string => {
+        const activeConn = connections.find(c => c.id === activeConnectionId);
+        if (!activeConn) return `SELECT * FROM ${table} LIMIT ${limit};`;
+
+        const dbType = activeConn.config.db_type;
+        
+        switch (dbType) {
+            case 'SQLServer':
+                return `SELECT TOP ${limit} * FROM ${table};`;
+            case 'SQLite':
+            case 'MySQL':
+            case 'PostgreSQL':
+            default:
+                return `SELECT * FROM ${table} LIMIT ${limit};`;
+        }
     };
 
     const handleFkBack = () => {
@@ -342,48 +459,52 @@ CREATE TABLE new_table (
 
     const handleExecute = async () => {
         if (!activeConnectionId || !activeTab?.sql?.trim()) {
-            setError('Please connect to a database and enter a query');
+            if (activeTab) {
+                updateTabResult(activeTab.id, null, false, 'Please connect to a database and enter a query');
+            }
             return;
         }
 
-        setIsExecuting(true);
-        setError(null);
+        updateTabResult(activeTab.id, null, true, null);
         closeFkSidebar();
 
         try {
             const queryResult = await executeQuery(activeConnectionId, activeTab.sql);
-            setResult(queryResult);
+            updateTabResult(activeTab.id, queryResult, false, null);
         } catch (err) {
-            setError(String(err));
-            setResult(null);
-        } finally {
-            setIsExecuting(false);
+            updateTabResult(activeTab.id, null, false, String(err));
         }
     };
 
     const handleTableDataRequest = async (table: string) => {
         if (!activeConnectionId) return;
 
-        const sql = `SELECT * FROM ${table} LIMIT ${settings.defaultRowLimit};`;
-        if (activeTab) {
-            updateTabSql(activeTab.id, sql);
-        }
+        const sql = getSelectAllSql(table, settings.defaultRowLimit);
+        
+        // Create a new tab for this table query
+        addQueryTab();
+        
+        // Wait a bit for the tab to be created and get the new tab
+        setTimeout(async () => {
+            const tabs = useConnectionStore.getState().queryTabs;
+            const newTab = tabs[tabs.length - 1];
+            
+            if (newTab) {
+                updateTabSql(newTab.id, sql);
+                
+                console.log('[Frontend] Starting table data request:', table);
+                updateTabResult(newTab.id, null, true, null);
+                closeFkSidebar();
 
-        console.log('[Frontend] Starting table data request:', table);
-        setIsExecuting(true);
-        setError(null);
-        closeFkSidebar();
-
-        try {
-            const queryResult = await getTableData(activeConnectionId, table, settings.defaultRowLimit);
-            setResult(queryResult);
-        } catch (err) {
-            console.error('[Frontend] Error:', err);
-            setError(String(err));
-            setResult(null);
-        } finally {
-            setIsExecuting(false);
-        }
+                try {
+                    const queryResult = await getTableData(activeConnectionId, table, settings.defaultRowLimit);
+                    updateTabResult(newTab.id, queryResult, false, null);
+                } catch (err) {
+                    console.error('[Frontend] Error:', err);
+                    updateTabResult(newTab.id, null, false, String(err));
+                }
+            }
+        }, 50);
     };
 
     const resolveTableName = (guessedTable: string): string | null => {
@@ -417,7 +538,7 @@ CREATE TABLE new_table (
         const resolvedTable = resolveTableName(table);
         const tableName = resolvedTable || table;
 
-        const requestId = Date.now().toString();
+        const requestId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
         latestFkRequestId.current = requestId;
 
         const newContext: FkViewContext = {
@@ -439,8 +560,18 @@ CREATE TABLE new_table (
         });
 
         try {
+            // Check if this request is still valid before starting
+            if (latestFkRequestId.current !== requestId) {
+                console.log('[FK] Request cancelled before execution:', requestId);
+                return;
+            }
+
             const quotedValue = typeof fkValue === 'string' ? `'${fkValue}'` : fkValue;
-            const sql = `SELECT * FROM ${tableName} WHERE id = ${quotedValue} LIMIT 1;`;
+            const activeConn = connections.find(c => c.id === activeConnectionId);
+            const isSqlServer = activeConn?.config.db_type === 'SQLServer';
+            const sql = isSqlServer 
+                ? `SELECT TOP 1 * FROM ${tableName} WHERE id = ${quotedValue};`
+                : `SELECT * FROM ${tableName} WHERE id = ${quotedValue} LIMIT 1;`;
             const queryResult = await executeQuery(activeConnectionId, sql);
 
             if (latestFkRequestId.current === requestId) {
@@ -490,9 +621,10 @@ CREATE TABLE new_table (
                         {activeConnectionId ? (
                             <>
                                 <div className="connection-status connected" />
-                                <span className="db-logo" style={{ fontSize: '14px', marginRight: '6px' }}>
-                                    {connections.find(c => c.id === activeConnectionId)?.config.db_type === 'PostgreSQL' ? '🐘' : '🐬'}
-                                </span>
+                                <DatabaseIcon
+                                    dbType={connections.find(c => c.id === activeConnectionId)?.config.db_type || 'PostgreSQL'}
+                                    size={20}
+                                />
                                 <div className="connection-info">
                                     <span className="connection-label">Connected</span>
                                     <span className="connection-name">
@@ -533,9 +665,7 @@ CREATE TABLE new_table (
                                             }}
                                         >
                                             <div className="connection-icon-wrapper">
-                                                <span className="db-logo">
-                                                    {conn.config.db_type === 'PostgreSQL' ? '🐘' : '🐬'}
-                                                </span>
+                                                <DatabaseIcon dbType={conn.config.db_type} size={20} />
                                                 <div className="connection-status-badge" />
                                             </div>
                                             <div className="connection-details">
@@ -572,9 +702,7 @@ CREATE TABLE new_table (
                                                 }}
                                             >
                                                 <div className="connection-icon-wrapper">
-                                                    <span className="db-logo" style={{ opacity: 0.6 }}>
-                                                        {saved.config.db_type === 'PostgreSQL' ? '🐘' : '🐬'}
-                                                    </span>
+                                                    <DatabaseIcon dbType={saved.config.db_type} size={20} />
                                                 </div>
                                                 <div className="connection-details">
                                                     <div className="connection-title">{saved.config.name || 'Database'}</div>
@@ -729,6 +857,13 @@ CREATE TABLE new_table (
                             key={tab.id}
                             className={`tab ${activeTabId === tab.id ? 'active' : ''}`}
                             onClick={() => setActiveTab(tab.id)}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                // Close other context menus
+                                window.dispatchEvent(new Event('close-context-menus'));
+                                setTabContextMenu({ x: e.clientX, y: e.clientY, tab });
+                            }}
                             onMouseDown={(e) => {
                                 // Middle click to close tab
                                 if (e.button === 1) {
@@ -794,7 +929,7 @@ CREATE TABLE new_table (
                                     <button
                                         className="btn btn-success"
                                         onClick={handleExecute}
-                                        disabled={isExecuting || !activeConnectionId}
+                                        disabled={(activeTab?.isExecuting || false) || !activeConnectionId}
                                     >
                                         <Play size={14} />
                                         Run
@@ -885,9 +1020,9 @@ CREATE TABLE new_table (
 
                             <div className="results-area">
                                 <ResultsPanel
-                                    result={result}
-                                    isLoading={isExecuting}
-                                    error={error}
+                                    result={activeTab?.result || null}
+                                    isLoading={activeTab?.isExecuting || false}
+                                    error={activeTab?.error || null}
                                     onNavigateToTable={handleNavigateToTable}
                                     tables={tables}
                                     showImagePreviews={settings.showImagePreviews}
@@ -967,7 +1102,7 @@ CREATE TABLE new_table (
                     </div>
                     <div className="status-item">
                         <Clock size={12} />
-                        {result ? `${result.execution_time_ms}ms` : 'Ready'}
+                        {activeTab?.result ? `${activeTab.result.execution_time_ms}ms` : 'Ready'}
                     </div>
                     <div className="status-item" style={{ marginLeft: 'auto' }}>
                         Datablaze v0.1.0
@@ -1096,6 +1231,121 @@ CREATE TABLE new_table (
                     </>
                 )
             }
+            
+            {/* Tab Context Menu */}
+            {tabContextMenu && (
+                <div
+                    className="context-menu"
+                    style={{
+                        position: 'fixed',
+                        top: Math.min(tabContextMenu.y, window.innerHeight - 300),
+                        left: Math.min(tabContextMenu.x, window.innerWidth - 220),
+                        zIndex: 10000,
+                        background: 'var(--bg-elevated)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                        minWidth: '200px',
+                        padding: '4px',
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <div
+                        className="context-menu-item"
+                        onClick={() => {
+                            handleCloseTab(tabContextMenu.tab);
+                            setTabContextMenu(null);
+                        }}
+                        style={{
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                        }}
+                    >
+                        <X size={14} />
+                        Close Tab
+                    </div>
+                    
+                    {queryTabs.findIndex(t => t.id === tabContextMenu.tab.id) < queryTabs.length - 1 && (
+                        <div
+                            className="context-menu-item"
+                            onClick={() => handleCloseTabsToRight(tabContextMenu.tab.id)}
+                            style={{
+                                padding: '8px 12px',
+                                cursor: 'pointer',
+                                borderRadius: '4px',
+                                fontSize: '13px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                            }}
+                        >
+                            <ChevronDown size={14} style={{ transform: 'rotate(-90deg)' }} />
+                            Close Tabs to the Right
+                        </div>
+                    )}
+                    
+                    {queryTabs.length > 1 && (
+                        <div
+                            className="context-menu-item"
+                            onClick={() => handleCloseOtherTabs(tabContextMenu.tab.id)}
+                            style={{
+                                padding: '8px 12px',
+                                cursor: 'pointer',
+                                borderRadius: '4px',
+                                fontSize: '13px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                            }}
+                        >
+                            <X size={14} />
+                            Close Other Tabs
+                        </div>
+                    )}
+                    
+                    <div style={{ height: '1px', background: 'var(--border-color)', margin: '4px 0' }} />
+                    
+                    <div
+                        className="context-menu-item"
+                        onClick={handleCloseAllTabs}
+                        style={{
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                        }}
+                    >
+                        <X size={14} />
+                        Close All Tabs
+                    </div>
+                    
+                    <div
+                        className="context-menu-item"
+                        onClick={handleForceCloseAllTabs}
+                        style={{
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                            borderRadius: '4px',
+                            fontSize: '13px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            color: 'var(--error)',
+                        }}
+                    >
+                        <X size={14} />
+                        Force Close All
+                    </div>
+                </div>
+            )}
         </div >
     );
 }
