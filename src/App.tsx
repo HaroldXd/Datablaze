@@ -37,6 +37,7 @@ import { DatabaseIcon } from './components/UI/DatabaseIcon';
 
 import './index.css';
 
+const appVersion = '0.2.1';
 
 interface FkViewContext {
     id: string;
@@ -1105,7 +1106,7 @@ CREATE TABLE new_table (
                         {activeTab?.result ? `${activeTab.result.execution_time_ms}ms` : 'Ready'}
                     </div>
                     <div className="status-item" style={{ marginLeft: 'auto' }}>
-                        Datablaze v0.2.1
+                        Datablaze v{appVersion}
                     </div>
                 </div>
             </main >
