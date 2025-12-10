@@ -1,7 +1,7 @@
 import React from 'react';
 
 interface DatabaseIconProps {
-    dbType: 'PostgreSQL' | 'MySQL';
+    dbType: 'PostgreSQL' | 'MySQL' | 'SQLServer' | 'SQLite';
     size?: number;
 }
 
@@ -45,6 +45,52 @@ export const DatabaseIcon: React.FC<DatabaseIconProps> = ({ dbType, size = 24 })
                     stroke="#E48E00" 
                     strokeWidth="2" 
                     strokeLinecap="round"
+                />
+            </svg>
+        );
+    }
+
+    if (dbType === 'SQLServer') {
+        return (
+            <svg 
+                width={size} 
+                height={size} 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                xmlns="http://www.w3.org/2000/svg"
+            >
+                <path 
+                    d="M12 2C8.134 2 5 3.12 5 4.5V19.5C5 20.88 8.134 22 12 22C15.866 22 19 20.88 19 19.5V4.5C19 3.12 15.866 2 12 2Z" 
+                    fill="#CC2927"
+                />
+                <ellipse cx="12" cy="4.5" rx="7" ry="2.5" fill="#E8453C"/>
+                <ellipse cx="12" cy="12" rx="7" ry="2.5" fill="#CC2927" opacity="0.5"/>
+                <ellipse cx="12" cy="19.5" rx="7" ry="2.5" fill="#CC2927" opacity="0.3"/>
+            </svg>
+        );
+    }
+
+    if (dbType === 'SQLite') {
+        return (
+            <svg 
+                width={size} 
+                height={size} 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                xmlns="http://www.w3.org/2000/svg"
+            >
+                <path 
+                    d="M12 2L4 6v12l8 4 8-4V6l-8-4z" 
+                    fill="#003B57"
+                />
+                <path 
+                    d="M12 2L4 6l8 4 8-4-8-4z" 
+                    fill="#0F80CC"
+                />
+                <path 
+                    d="M20 6v12l-8 4V10l8-4z" 
+                    fill="#005382"
+                    opacity="0.7"
                 />
             </svg>
         );

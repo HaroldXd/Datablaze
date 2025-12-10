@@ -40,10 +40,16 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
         }));
 
         if (name === 'db_type') {
+            const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLServer' | 'SQLite';
+            let port = 5432;
+            if (dbType === 'MySQL') port = 3306;
+            else if (dbType === 'SQLServer') port = 1433;
+            else if (dbType === 'SQLite') port = 0;
+            
             setConfig((prev) => ({
                 ...prev,
-                db_type: value as 'PostgreSQL' | 'MySQL',
-                port: value === 'PostgreSQL' ? 5432 : 3306,
+                db_type: dbType,
+                port,
             }));
         }
     };
@@ -70,9 +76,19 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
         try {
             // If no database is specified, connect and show database selector
             if (!config.database || config.database.trim() === '') {
+                // SQLite doesn't need database selection, it needs a file path
+                if (config.db_type === 'SQLite') {
+                    setError('Please specify a database file path');
+                    setConnectingLocal(false);
+                    setConnecting(false);
+                    return;
+                }
+                
                 const tempConfig = { ...config, database: 'postgres' }; // Default for connection
                 if (config.db_type === 'MySQL') {
                     tempConfig.database = 'mysql'; // MySQL default
+                } else if (config.db_type === 'SQLServer') {
+                    tempConfig.database = 'master'; // SQL Server default
                 }
 
                 const connection = await connectDatabase(tempConfig);
@@ -139,9 +155,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ onConnect, onCan
         }
     };
 
-    const dbTypeOptions: Array<{ value: 'PostgreSQL' | 'MySQL', label: string, port: number }> = [
+    const dbTypeOptions: Array<{ value: 'PostgreSQL' | 'MySQL' | 'SQLServer' | 'SQLite', label: string, port: number }> = [
         { value: 'PostgreSQL', label: 'PostgreSQL', port: 5432 },
         { value: 'MySQL', label: 'MySQL', port: 3306 },
+        { value: 'SQLServer', label: 'SQL Server', port: 1433 },
+        { value: 'SQLite', label: 'SQLite', port: 0 },
     ];
 
     return (

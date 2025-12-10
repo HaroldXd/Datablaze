@@ -4,11 +4,13 @@ import { invoke } from '@tauri-apps/api/core';
 export interface DatabaseType {
   PostgreSQL?: {};
   MySQL?: {};
+  SQLServer?: {};
+  SQLite?: {};
 }
 
 export interface ConnectionConfig {
   name: string;
-  db_type: 'PostgreSQL' | 'MySQL';
+  db_type: 'PostgreSQL' | 'MySQL' | 'SQLServer' | 'SQLite';
   host: string;
   port: number;
   database: string;
