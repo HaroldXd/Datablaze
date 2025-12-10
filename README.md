@@ -101,7 +101,7 @@ Download the latest release for your platform:
 
 | Platform | Download |
 |----------|----------|
-| Windows  | [📦 Datablaze_0.2.0_x64_en-US.msi](https://github.com/HaroldXd/Datablaze/releases/download/v0.2.0/Datablaze_0.2.0_x64_en-US.msi) |
+| Windows  | [📦 Datablaze_0.2.0_x64_en-US.msi](https://github.com/HaroldXd/Datablaze/releases/download/versions/Datablaze_0.2.0_x64_en-US.msi) |
 | macOS    | Coming soon |
 | Linux    | Coming soon |
 
