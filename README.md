@@ -25,6 +25,14 @@
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
 </p>
 
+<p align="center">
+  <a href="https://github.com/HaroldXd/Datablaze/actions/workflows/release.yml">
+    <img src="https://github.com/HaroldXd/Datablaze/actions/workflows/release.yml/badge.svg" alt="Release Build">
+  </a>
+  <img src="https://img.shields.io/github/v/release/HaroldXd/Datablaze?style=flat-square" alt="Latest Release">
+  <img src="https://img.shields.io/github/downloads/HaroldXd/Datablaze/total?style=flat-square" alt="Downloads">
+</p>
+
 ---
 
 ## ✨ Features
@@ -99,11 +107,13 @@
 
 Download the latest release for your platform:
 
-| Platform | Download |
-|----------|----------|
-| Windows  | [📦 Datablaze_0.2.0_x64_en-US.msi](https://github.com/HaroldXd/Datablaze/releases/download/versions/Datablaze_0.2.0_x64_en-US.msi) |
-| macOS    | Coming soon |
-| Linux    | Coming soon |
+| Platform | Download | Format |
+|----------|----------|--------|
+| 🪟 **Windows** | [Latest Release](https://github.com/HaroldXd/Datablaze/releases/latest) | `.msi` installer |
+| 🐧 **Linux** | [Latest Release](https://github.com/HaroldXd/Datablaze/releases/latest) | `.deb` (Debian/Ubuntu)<br>`.AppImage` (Universal) |
+| 🍎 **macOS** | Coming soon | `.dmg` |
+
+> **Note:** Releases are automatically built for Windows and Linux via GitHub Actions. Simply download the latest version from the [Releases](https://github.com/HaroldXd/Datablaze/releases) page.
 
 ### Build from Source
 
