@@ -69,15 +69,15 @@ Download the latest release for your platform:
 
 | Platform | Download |
 |----------|----------|
-| Windows  | [Datablaze-x.x.x-setup.exe](#) |
-| macOS    | [Datablaze-x.x.x.dmg](#) |
-| Linux    | [Datablaze-x.x.x.AppImage](#) |
+| Windows  | [📦 Datablaze_0.1.0_x64_en-US.msi](https://github.com/HaroldXd/Datablaze/releases/download/v0.1.0/Datablaze_0.1.0_x64_en-US.msi) |
+| macOS    | Coming soon |
+| Linux    | Coming soon |
 
 ### Build from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/datablaze.git
+git clone https://github.com/HaroldXd/Datablaze.git
 cd datablaze
 
 # Install dependencies
@@ -222,7 +222,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 </p>
 
 <p align="center">
-  <a href="https://github.com/yourusername/datablaze">
-    <img src="https://img.shields.io/github/stars/yourusername/datablaze?style=social" alt="GitHub Stars">
+  <a href="https://github.com/HaroldXd/Datablaze">
+    <img src="https://img.shields.io/github/stars/HaroldXd/Datablaze?style=social" alt="GitHub Stars">
   </a>
 </p>
