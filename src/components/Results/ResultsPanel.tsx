@@ -1,0 +1,783 @@
+import React, { useState, useEffect } from 'react';
+import { QueryResult } from '../../lib/tauri';
+import { Table, Code, ExternalLink, Copy, Download, CheckSquare, Square, ChevronUp, ChevronDown, Edit2, Check, X } from 'lucide-react';
+import { JsonViewer } from './JsonViewer';
+
+interface TableInfo {
+    schema: string;
+    name: string;
+    row_count: number | null;
+}
+
+interface ResultsPanelProps {
+    result: QueryResult | null;
+    isLoading: boolean;
+    error: string | null;
+    onNavigateToTable?: (table: string, foreignKeyValue: any) => void;
+    tables?: TableInfo[]; // For FK resolution display
+    showImagePreviews?: boolean;
+    maxImagePreviewHeight?: number;
+    compact?: boolean;
+}
+
+type ViewMode = 'table' | 'json' | 'card';
+
+// Simple pluralization with common irregular cases
+function pluralize(word: string): string {
+    // Common irregular endings
+    if (word.endsWith('y')) {
+        // Check if it's a vowel + y (stays as is) or consonant + y (becomes ies)
+        const beforeY = word.charAt(word.length - 2);
+        if ('aeiou'.includes(beforeY)) {
+            return word + 's'; // day -> days
+        }
+        return word.slice(0, -1) + 'ies'; // category -> categories
+    }
+    if (word.endsWith('s') || word.endsWith('x') || word.endsWith('ch') || word.endsWith('sh')) {
+        return word + 'es'; // class -> classes
+    }
+    return word + 's';
+}
+
+// Detect if a column is likely a foreign key based on naming conventions
+function isForeignKeyColumn(columnName: string): string | null {
+    const lower = columnName.toLowerCase();
+    // Common patterns: user_id, userId, category_id, etc.
+    if (lower.endsWith('_id') && lower !== 'id') {
+        // Extract table name: "user_id" -> "users", "item_category_id" -> "item_categories"
+        const tableName = lower.replace(/_id$/, '');
+        return pluralize(tableName);
+    }
+    if (lower.endsWith('id') && lower.length > 2 && lower !== 'id') {
+        // camelCase: userId -> users
+        const tableName = lower.replace(/id$/i, '');
+        return pluralize(tableName);
+    }
+    return null;
+}
+
+// Check if a string looks like a Base64 image (data URI)
+function isBase64Image(value: string): boolean {
+    if (typeof value !== 'string') return false;
+    return value.startsWith('data:image/');
+}
+
+// Check if a string looks like raw Base64 data (no data: prefix)
+function isRawBase64(value: string): boolean {
+    if (typeof value !== 'string') return false;
+    if (value.length < 100) return false; // Too short to be meaningful base64
+    // Check if it matches Base64 pattern (only alphanumeric, +, /, =)
+    const base64Regex = /^[A-Za-z0-9+/=]+$/;
+    return base64Regex.test(value.substring(0, 200)); // Check first 200 chars
+}
+
+// Try to detect the image type from raw base64
+function detectImageType(base64: string): string | null {
+    // Common image magic bytes in base64
+    const signatures: { [key: string]: string } = {
+        '/9j/': 'jpeg',
+        'iVBORw': 'png',
+        'R0lGOD': 'gif',
+        'UklGR': 'webp',
+    };
+    for (const [sig, type] of Object.entries(signatures)) {
+        if (base64.startsWith(sig)) return type;
+    }
+    return null;
+}
+
+export const ResultsPanel: React.FC<ResultsPanelProps> = ({
+    result,
+    isLoading,
+    error,
+    onNavigateToTable,
+    tables,
+    showImagePreviews = true,
+    maxImagePreviewHeight = 60,
+    compact = false
+}) => {
+    // Default to card view if compact, otherwise table
+    const [viewMode, setViewMode] = useState<ViewMode>(compact ? 'card' : 'table');
+    const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+    const [copyFeedback, setCopyFeedback] = useState<'json' | 'csv' | null>(null);
+
+    // Sorting state
+    const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+
+    // Cell Context Menu state
+    const [cellContextMenu, setCellContextMenu] = useState<{ x: number; y: number; value: any; rowIndex: number; colKey: string } | null>(null);
+
+    // Editing state
+    const [editingCell, setEditingCell] = useState<{ rowIndex: number; colKey: string; value: any } | null>(null);
+
+    // Image Modal State
+    const [expandedImage, setExpandedImage] = useState<string | null>(null);
+
+    // Reset selection when result changes
+    useEffect(() => {
+        setSelectedRows(new Set());
+        setSortConfig(null);
+    }, [result]);
+
+    // Close context menu on global click or custom event
+    useEffect(() => {
+        const handleClickOutside = () => setCellContextMenu(null);
+        if (cellContextMenu) {
+            document.addEventListener('click', handleClickOutside);
+            window.addEventListener('close-context-menus', handleClickOutside);
+        }
+        return () => {
+            document.removeEventListener('click', handleClickOutside);
+            window.removeEventListener('close-context-menus', handleClickOutside);
+        };
+    }, [cellContextMenu]);
+
+    if (isLoading) {
+        return (
+            <div className="empty-state">
+                <div className="animate-spin" style={{ marginBottom: '16px' }}>
+                    <Code size={32} color="var(--accent-primary)" />
+                </div>
+                <p className="empty-state-title">Executing query...</p>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="empty-state">
+                <div style={{
+                    padding: '20px',
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    borderRadius: '8px',
+                    border: '1px solid var(--error)',
+                    maxWidth: '500px'
+                }}>
+                    <p style={{ color: 'var(--error)', fontWeight: 500, marginBottom: '8px' }}>Error</p>
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{error}</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (!result) {
+        return (
+            <div className="empty-state">
+                <Table size={48} className="empty-state-icon" />
+                <p className="empty-state-title">Select a table to view data</p>
+                <p className="empty-state-text">
+                    Click on a table in the sidebar, or write a SQL query
+                </p>
+            </div>
+        );
+    }
+
+    const handleFkClick = (tableName: string, value: any) => {
+        if (onNavigateToTable && value !== null) {
+            onNavigateToTable(tableName, value);
+        }
+    };
+
+    const toggleRowSelection = (index: number) => {
+        const newSelected = new Set(selectedRows);
+        if (newSelected.has(index)) {
+            newSelected.delete(index);
+        } else {
+            newSelected.add(index);
+        }
+        setSelectedRows(newSelected);
+    };
+
+    const selectAllRows = () => {
+        if (!result) return;
+        if (selectedRows.size === result.rows.length) {
+            setSelectedRows(new Set());
+        } else {
+            setSelectedRows(new Set(result.rows.map((_, i) => i)));
+        }
+    };
+
+    const copySelectedAsJSON = () => {
+        if (!result) return;
+        const rows = Array.from(selectedRows).map(i => result.rows[i]);
+        navigator.clipboard.writeText(JSON.stringify(rows, null, 2));
+        setCopyFeedback('json');
+        setTimeout(() => setCopyFeedback(null), 2000);
+    };
+
+    const copySelectedAsCSV = () => {
+        if (!result) return;
+        const rows = Array.from(selectedRows).map(i => result.rows[i]);
+        const headers = result.columns.map(c => c.name).join(',');
+        const csvRows = rows.map(row =>
+            result.columns.map(col => {
+                const val = row[col.name];
+                if (val === null) return '';
+                if (typeof val === 'string' && (val.includes(',') || val.includes('"'))) {
+                    return `"${val.replace(/"/g, '""')}"`;
+                }
+                return String(val);
+            }).join(',')
+        );
+        navigator.clipboard.writeText([headers, ...csvRows].join('\n'));
+        setCopyFeedback('csv');
+        setTimeout(() => setCopyFeedback(null), 2000);
+    };
+
+    // Sorting logic
+    const handleSort = (key: string) => {
+        let direction: 'asc' | 'desc' = 'asc';
+        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const getSortedRows = () => {
+        if (!result) return [];
+        let rows = [...result.rows];
+        if (sortConfig) {
+            rows.sort((a, b) => {
+                const aValue = a[sortConfig.key] as any;
+                const bValue = b[sortConfig.key] as any;
+
+                if (aValue === bValue) return 0;
+                if (aValue === null) return 1;
+                if (bValue === null) return -1;
+
+                if (aValue < bValue) {
+                    return sortConfig.direction === 'asc' ? -1 : 1;
+                }
+                if (aValue > bValue) {
+                    return sortConfig.direction === 'asc' ? 1 : -1;
+                }
+                return 0;
+            });
+        }
+        return rows;
+    };
+
+    const sortedRows = getSortedRows();
+
+    // Cell Context Menu Handlers
+    const handleCellContextMenu = (e: React.MouseEvent, rowIndex: number, colKey: string, value: any) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.dispatchEvent(new Event('close-context-menus'));
+        setCellContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            value,
+            rowIndex,
+            colKey
+        });
+    };
+
+    const handleCopyCellJSON = () => {
+        if (!cellContextMenu) return;
+        navigator.clipboard.writeText(JSON.stringify(cellContextMenu.value, null, 2));
+        setCellContextMenu(null);
+    };
+
+    const handleEditCell = () => {
+        if (!cellContextMenu) return;
+        setEditingCell({
+            rowIndex: cellContextMenu.rowIndex,
+            colKey: cellContextMenu.colKey,
+            value: cellContextMenu.value
+        });
+        setCellContextMenu(null);
+    };
+
+    const handleSaveEdit = (newValue: any) => {
+        // TODO: Implement actual DB update here
+        console.log('Saving edit:', editingCell, 'New Value:', newValue);
+        // For now just close edit mode
+        setEditingCell(null);
+    };
+
+    // Helper to render sort icon
+    const renderSortIcon = (col: string) => {
+        if (!sortConfig || sortConfig.key !== col) {
+            return <div style={{ width: 14, height: 14, opacity: 0 }} />; // Placeholder
+        }
+        return sortConfig.direction === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />;
+    };
+
+    // Resolve FK table name using actual tables list
+    const resolveTableName = (guessedTable: string): string => {
+        if (!tables || tables.length === 0) return guessedTable;
+
+        const tableNames = tables.map(t => t.name.toLowerCase());
+        const guess = guessedTable.toLowerCase();
+
+        // 1. Exact match
+        if (tableNames.includes(guess)) return guess;
+
+        // 2. Try singular version
+        let singular = guess;
+        if (guess.endsWith('ies')) {
+            singular = guess.slice(0, -3) + 'y';
+        } else if (guess.endsWith('es')) {
+            singular = guess.slice(0, -2);
+        } else if (guess.endsWith('s')) {
+            singular = guess.slice(0, -1);
+        }
+        if (singular !== guess && tableNames.includes(singular)) return singular;
+
+        // 3. Find table that ends with the guessed name
+        const endsWithMatch = tableNames.find(t => t.endsWith('_' + guess) || t.endsWith(guess));
+        if (endsWithMatch) return endsWithMatch;
+
+        // 4. Find table that ends with singular version
+        const endsWithSingular = tableNames.find(t => t.endsWith('_' + singular) || t.endsWith(singular));
+        if (endsWithSingular) return endsWithSingular;
+
+        return guessedTable;
+    };
+
+    const renderCellValue = (col: string, value: any, rowIndex: number) => {
+        // Check if this cell is being edited
+        if (editingCell && editingCell.rowIndex === rowIndex && editingCell.colKey === col) {
+            return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <input
+                        autoFocus
+                        className="cell-editor"
+                        defaultValue={String(value)}
+                        onBlur={(e) => {
+                            // Don't auto-save on blur if clicking the buttons
+                            if (e.relatedTarget && (e.relatedTarget as HTMLElement).closest('.edit-action-btn')) return;
+                            // Optional: auto-save on blur, or just cancel? User asked for explicit confirm.
+                            // Let's keep it safe and just cancel if they click away without confirming, OR auto-save.
+                            // Given "confirme o descarte", let's assume strict actions, but auto-save on blur is standard UX.
+                            // I'll make it so you MUST click check or hit enter to save, otherwise blur might be ambiguous.
+                            // Actually, standard grid behavior is save on blur. But let's stick to the requested explicit mode.
+                            // If I don't save on blur, I should probably cancel or keep editing.
+                            // Let's try to keep focus if possible or just close (cancel).
+                            // For this iteration: Blur = Cancel (safest for "explicit" request).
+                            // But that might be annoying. Let's do: Blur -> Save (Standard) but provide buttons.
+                            // Wait, the user said "se seleccione se edite y luego se confirme o se descarte".
+                            // I will rely on the buttons/keys.
+                            // setEditingCell(null); // This would cancel.
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveEdit(e.currentTarget.value);
+                            if (e.key === 'Escape') setEditingCell(null);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ minWidth: '60px', flex: 1 }}
+                        id={`edit-input-${rowIndex}-${col}`}
+                    />
+                    <button
+                        className="edit-action-btn btn-success"
+                        title="Confirm"
+                        onMouseDown={(e) => {
+                            e.preventDefault(); // Prevent blur
+                            const input = document.getElementById(`edit-input-${rowIndex}-${col}`) as HTMLInputElement;
+                            if (input) handleSaveEdit(input.value);
+                        }}
+                        style={{ padding: '4px', height: '24px', width: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px' }}
+                    >
+                        <Check size={14} />
+                    </button>
+                    <button
+                        className="edit-action-btn btn-danger"
+                        title="Discard"
+                        onMouseDown={(e) => {
+                            e.preventDefault(); // Prevent blur
+                            setEditingCell(null);
+                        }}
+                        style={{ padding: '4px', height: '24px', width: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px' }}
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            );
+        }
+
+        if (value === null) {
+            return <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>null</span>;
+        }
+
+        // Lazy Load Image Component for better performance
+        const LazyImage = ({ src, maxHeight, onClick, alt }: { src: string, maxHeight: number, onClick: () => void, alt: string }) => {
+            const [isLoaded, setIsLoaded] = useState(false);
+
+            useEffect(() => {
+                // Defer image rendering slightly to allow table layout to settle
+                const timer = setTimeout(() => setIsLoaded(true), 50);
+                return () => clearTimeout(timer);
+            }, []);
+
+            if (!isLoaded) {
+                // Placeholder while "loading"
+                return (
+                    <div
+                        style={{
+                            height: maxHeight,
+                            width: '60px',
+                            background: 'var(--bg-tertiary)',
+                            borderRadius: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}
+                    >
+                        <div style={{
+                            width: '12px',
+                            height: '12px',
+                            borderRadius: '50%',
+                            border: '2px solid var(--text-muted)',
+                            borderTopColor: 'transparent',
+                            animation: 'spin 1s linear infinite'
+                        }} />
+                    </div>
+                );
+            }
+
+            return (
+                <img
+                    src={src}
+                    alt={alt}
+                    style={{
+                        maxWidth: '100%',
+                        maxHeight: `${maxHeight}px`,
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        border: '1px solid var(--border-color)',
+                        animation: 'fadeIn 0.3s ease'
+                    }}
+                    title="Click to expand"
+                    onClick={onClick}
+                />
+            );
+        };
+
+        // ... inside ResultsPanel ...
+
+        // Check for Base64 image (data URI format)
+        if (typeof value === 'string' && isBase64Image(value)) {
+            if (!showImagePreviews) {
+                return <span className="text-muted" style={{ fontSize: '11px', fontFamily: 'monospace' }} title="Image hidden. Double click to see/edit value.">{value.substring(0, 35)}...</span>;
+            }
+            return (
+                <div className="base64-preview">
+                    <LazyImage
+                        src={value}
+                        maxHeight={maxImagePreviewHeight}
+                        onClick={() => setExpandedImage(value)}
+                        alt="Base64 image"
+                    />
+                </div>
+            );
+        }
+
+        // Check for raw Base64 that might be an image
+        if (typeof value === 'string' && isRawBase64(value)) {
+            const imageType = detectImageType(value);
+            if (imageType) {
+                if (!showImagePreviews) {
+                    return <span className="text-muted" style={{ fontSize: '11px', fontFamily: 'monospace' }} title="Image hidden. Double click to see/edit value.">{value.substring(0, 35)}...</span>;
+                }
+                const dataUri = `data:image/${imageType};base64,${value}`;
+                return (
+                    <div className="base64-preview">
+                        <LazyImage
+                            src={dataUri}
+                            maxHeight={maxImagePreviewHeight}
+                            onClick={() => setExpandedImage(dataUri)}
+                            alt="Base64 image"
+                        />
+                    </div>
+                );
+            }
+            // It's base64 but not an image
+            return (
+                <span
+                    style={{
+                        color: 'var(--warning)',
+                        fontStyle: 'italic',
+                        cursor: 'help'
+                    }}
+                    title={`Base64 data (${value.length} chars)`}
+                >
+                    [Base64: {value.length} bytes]
+                </span>
+            );
+        }
+
+        const fkTable = isForeignKeyColumn(col);
+        if (fkTable && onNavigateToTable) {
+            return (
+                <span
+                    className="fk-link"
+                    onClick={() => handleFkClick(fkTable, value)}
+                    title={`View ${fkTable} where id = ${value}`}
+                >
+                    {String(value)}
+                    <ExternalLink size={10} style={{ marginLeft: '4px', opacity: 0.6 }} />
+                </span>
+            );
+        }
+
+        if (typeof value === 'object') {
+            return JSON.stringify(value);
+        }
+
+        return String(value);
+    };
+
+    return (
+        <div className={`results-panel ${compact ? 'compact' : ''}`}>
+            {/* Image Modal */}
+            {expandedImage && (
+                <div
+                    className="modal-overlay"
+                    style={{ zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.8)' }}
+                    onClick={() => setExpandedImage(null)}
+                >
+                    <div style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
+                        <img
+                            src={expandedImage}
+                            alt="Expanded"
+                            style={{ maxWidth: '100%', maxHeight: '90vh', borderRadius: '4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }}
+                        />
+                        <button
+                            onClick={() => setExpandedImage(null)}
+                            style={{
+                                position: 'absolute',
+                                top: '-40px',
+                                right: '0',
+                                background: 'none',
+                                border: 'none',
+                                color: 'white',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <X size={24} />
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Cell Context Menu */}
+            {cellContextMenu && (
+                <div
+                    className="context-menu"
+                    style={{
+                        top: cellContextMenu.y,
+                        left: cellContextMenu.x,
+                        position: 'fixed',
+                        zIndex: 1000
+                    }}
+                >
+                    <div className="context-menu-item" onClick={() => {
+                        navigator.clipboard.writeText(String(cellContextMenu.value));
+                        setCellContextMenu(null);
+                    }}>
+                        <Copy size={14} />
+                        <span>Copy Value</span>
+                    </div>
+                    <div className="context-menu-item" onClick={handleCopyCellJSON}>
+                        <Code size={14} />
+                        <span>Copy as JSON</span>
+                    </div>
+                    <div className="context-menu-divider" />
+                    <div className="context-menu-item" onClick={handleEditCell}>
+                        <Edit2 size={14} />
+                        <span>Edit Value</span>
+                    </div>
+                </div>
+            )}
+
+            <div className="results-header">
+                <div className="results-tabs">
+                    {!compact && (
+                        <button
+                            className={`results-tab ${viewMode === 'table' ? 'active' : ''}`}
+                            onClick={() => setViewMode('table')}
+                        >
+                            <Table size={14} />
+                            Table
+                        </button>
+                    )}
+                    <button
+                        className={`results-tab ${viewMode === 'card' ? 'active' : ''}`}
+                        onClick={() => setViewMode('card')}
+                    >
+                        <div style={{ transform: 'rotate(90deg)' }}><Table size={14} /></div>
+                        Card
+                    </button>
+                    <button
+                        className={`results-tab ${viewMode === 'json' ? 'active' : ''}`}
+                        onClick={() => setViewMode('json')}
+                    >
+                        <Code size={14} />
+                        JSON
+                    </button>
+                </div>
+
+                {/* Selection Actions */}
+                {selectedRows.size > 0 && (
+                    <div className="selection-actions">
+                        <span className="selection-count">{selectedRows.size} selected</span>
+                        <button onClick={copySelectedAsJSON} title="Copy as JSON">
+                            {copyFeedback === 'json' ? (
+                                <>
+                                    <CheckSquare size={12} />
+                                    Copied!
+                                </>
+                            ) : (
+                                <>
+                                    <Copy size={12} />
+                                    JSON
+                                </>
+                            )}
+                        </button>
+                        <button onClick={copySelectedAsCSV} title="Copy as CSV">
+                            {copyFeedback === 'csv' ? (
+                                <>
+                                    <CheckSquare size={12} />
+                                    Copied!
+                                </>
+                            ) : (
+                                <>
+                                    <Download size={12} />
+                                    CSV
+                                </>
+                            )}
+                        </button>
+                    </div>
+                )}
+
+                <div className="results-info">
+                    {result.row_count} rows • {result.execution_time_ms}ms
+                    {result.truncated && (
+                        <span style={{ color: 'var(--warning)', marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }} title="Result limited to 2000 rows to prevent freezing. Use LIMIT in your query to control this.">
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--warning)' }}></span>
+                            Truncated
+                        </span>
+                    )}
+                </div>
+            </div>
+
+            <div className="results-content">
+                {viewMode === 'table' && (
+                    <div className="table-container">
+                        <table className="data-table">
+                            <thead>
+                                <tr>
+                                    {/* Select All Checkbox */}
+                                    <th style={{ width: '30px', textAlign: 'center' }}>
+                                        <span
+                                            className="row-checkbox"
+                                            onClick={selectAllRows}
+                                            title={selectedRows.size === result.rows.length ? "Deselect all" : "Select all"}
+                                        >
+                                            {selectedRows.size === result.rows.length ? (
+                                                <CheckSquare size={14} />
+                                            ) : (
+                                                <Square size={14} />
+                                            )}
+                                        </span>
+                                    </th>
+                                    {result.columns.map((col, i) => {
+                                        const fkTable = isForeignKeyColumn(col.name);
+                                        const resolvedFkTable = fkTable ? resolveTableName(fkTable) : null;
+                                        return (
+                                            <th key={i} onClick={() => handleSort(col.name)} className="sortable-th" style={{ padding: '8px 12px', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-color)', borderRight: '1px solid var(--border-color)', position: 'sticky', top: 0, zIndex: 10 }}>
+                                                <div className="th-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+                                                        <span className="th-name" style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>
+                                                            {col.name}
+                                                            {fkTable && (
+                                                                <ExternalLink size={10} style={{ marginLeft: '4px', opacity: 0.4 }} />
+                                                            )}
+                                                        </span>
+                                                        <span style={{ fontSize: '10px', color: 'var(--accent-primary)', fontFamily: 'monospace' }}>
+                                                            {col.type_name}
+                                                        </span>
+                                                    </div>
+                                                    {renderSortIcon(col.name)}
+                                                </div>
+                                                {resolvedFkTable && (
+                                                    <div className="th-fk-ref" style={{ fontSize: '9px', color: 'var(--text-muted)', marginTop: '2px', fontStyle: 'italic' }}>
+                                                        → {resolvedFkTable}
+                                                    </div>
+                                                )}
+                                            </th>
+                                        );
+                                    })}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {sortedRows.map((row, i) => (
+                                    <tr key={i} className={selectedRows.has(i) ? 'selected' : ''}>
+                                        {/* Row Checkbox */}
+                                        <td style={{ textAlign: 'center' }}>
+                                            <span
+                                                className="row-checkbox"
+                                                onClick={() => toggleRowSelection(i)}
+                                            >
+                                                {selectedRows.has(i) ? (
+                                                    <CheckSquare size={14} />
+                                                ) : (
+                                                    <Square size={14} />
+                                                )}
+                                            </span>
+                                        </td>
+                                        {result.columns.map((col, j) => {
+                                            const isContextActive = cellContextMenu && cellContextMenu.rowIndex === i && cellContextMenu.colKey === col.name;
+                                            return (
+                                                <td
+                                                    key={j}
+                                                    className={isContextActive ? 'cell-context-active' : ''}
+                                                    onContextMenu={(e) => handleCellContextMenu(e, i, col.name, row[col.name])}
+                                                    onDoubleClick={() => {
+                                                        setEditingCell({ rowIndex: i, colKey: col.name, value: row[col.name] });
+                                                    }}
+                                                >
+                                                    {renderCellValue(col.name, row[col.name], i)}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
+                {viewMode === 'card' && (
+                    <div className="card-view-container">
+                        {sortedRows.map((row, i) => (
+                            <div key={i} className="record-card">
+                                {result.columns.map(col => (
+                                    <div key={col.name} className="record-field">
+                                        <div className="record-label">
+                                            {col.name}
+                                            <span style={{ marginLeft: '6px', fontSize: '10px', color: 'var(--text-muted)', fontWeight: 'normal' }}>
+                                                {col.type_name}
+                                            </span>
+                                            {isForeignKeyColumn(col.name) && <ExternalLink size={10} style={{ marginLeft: '4px', opacity: 0.4, display: 'inline' }} />}
+                                        </div>
+                                        <div className="record-value">
+                                            {renderCellValue(col.name, row[col.name], i)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {viewMode === 'json' && (
+                    <JsonViewer data={result.rows} />
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default ResultsPanel;
