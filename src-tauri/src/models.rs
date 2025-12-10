@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub enum DatabaseType {
     PostgreSQL,
     MySQL,
+    SQLite,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +84,10 @@ impl ConnectionConfig {
                     "mysql://{}:{}@{}:{}/{}",
                     self.username, self.password, self.host, self.port, self.database
                 )
+            }
+            DatabaseType::SQLite => {
+                // SQLite uses file path as database
+                self.database.clone()
             }
         }
     }

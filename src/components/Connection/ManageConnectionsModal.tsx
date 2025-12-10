@@ -78,8 +78,11 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
             };
 
             if (name === 'db_type') {
-                updated.db_type = value as 'PostgreSQL' | 'MySQL';
-                updated.port = value === 'PostgreSQL' ? 5432 : 3306;
+                const dbType = value as 'PostgreSQL' | 'MySQL' | 'SQLite';
+                updated.db_type = dbType;
+                if (dbType === 'PostgreSQL') updated.port = 5432;
+                else if (dbType === 'MySQL') updated.port = 3306;
+                else if (dbType === 'SQLite') updated.port = 0;
             }
 
             return updated;
@@ -147,6 +150,7 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
         const colors = {
             PostgreSQL: { bg: 'rgba(50, 115, 220, 0.15)', color: '#5294e2' },
             MySQL: { bg: 'rgba(247, 150, 70, 0.15)', color: '#f79646' },
+            SQLite: { bg: 'rgba(15, 128, 204, 0.15)', color: '#0F80CC' },
         };
         const style = colors[dbType as keyof typeof colors] || { bg: 'var(--bg-elevated)', color: 'var(--text-muted)' };
 
@@ -419,6 +423,20 @@ export const ManageConnectionsModal: React.FC<ManageConnectionsModalProps> = ({
                                             <DatabaseIcon dbType="MySQL" size={20} />
                                         </span>
                                         <span className="db-type-label">MySQL</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`db-type-option ${editConfig?.db_type === 'SQLite' ? 'active' : ''}`}
+                                        onClick={() => setEditConfig(prev => prev ? {
+                                            ...prev,
+                                            db_type: 'SQLite',
+                                            port: 0
+                                        } : prev)}
+                                    >
+                                        <span className="db-type-icon">
+                                            <DatabaseIcon dbType="SQLite" size={20} />
+                                        </span>
+                                        <span className="db-type-label">SQLite</span>
                                     </button>
                                 </div>
                             </div>

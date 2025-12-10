@@ -1,7 +1,7 @@
 import React from 'react';
 
 interface DatabaseIconProps {
-    dbType: 'PostgreSQL' | 'MySQL';
+    dbType: 'PostgreSQL' | 'MySQL' | 'SQLite';
     size?: number;
 }
 
@@ -45,6 +45,32 @@ export const DatabaseIcon: React.FC<DatabaseIconProps> = ({ dbType, size = 24 })
                     stroke="#E48E00" 
                     strokeWidth="2" 
                     strokeLinecap="round"
+                />
+            </svg>
+        );
+    }
+
+    if (dbType === 'SQLite') {
+        return (
+            <svg 
+                width={size} 
+                height={size} 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                xmlns="http://www.w3.org/2000/svg"
+            >
+                <path 
+                    d="M12 2L4 6v12l8 4 8-4V6l-8-4z" 
+                    fill="#003B57"
+                />
+                <path 
+                    d="M12 2L4 6l8 4 8-4-8-4z" 
+                    fill="#0F80CC"
+                />
+                <path 
+                    d="M20 6v12l-8 4V10l8-4z" 
+                    fill="#005382"
+                    opacity="0.7"
                 />
             </svg>
         );

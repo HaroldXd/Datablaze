@@ -32,6 +32,7 @@
 ### 🔌 **Multi-Database Support**
 - **PostgreSQL** - Full support with schema browsing
 - **MySQL** - Complete compatibility with all MySQL features
+- **SQLite** - Lightweight file-based database support
 - Easy connection management with saved credentials
 
 ### 🎨 **Beautiful Interface**
@@ -99,9 +100,10 @@ npm run tauri build
 1. Click the **connection selector** in the sidebar
 2. Click **"Add connection"**
 3. Fill in your database details:
-   - Database type (PostgreSQL/MySQL)
-   - Host, Port, Username, Password
-   - Database name (optional - you can browse all databases)
+   - Database type (PostgreSQL/MySQL/SQLite)
+   - For PostgreSQL/MySQL: Host, Port, Username, Password
+   - For SQLite: Database file path
+   - Database name (optional for PostgreSQL/MySQL - you can browse all databases)
 4. Click **Connect**
 
 ### Querying Data
@@ -129,7 +131,7 @@ npm run tauri build
 | **Frontend** | React 19, TypeScript, Zustand |
 | **Editor** | Monaco Editor |
 | **Backend** | Rust, Tauri 2.0 |
-| **Database Drivers** | SQLx (PostgreSQL, MySQL) |
+| **Database Drivers** | SQLx (PostgreSQL, MySQL, SQLite) |
 | **Styling** | Custom CSS with CSS Variables |
 | **Build** | Vite, Cargo |
 
