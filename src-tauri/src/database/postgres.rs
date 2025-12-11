@@ -72,7 +72,7 @@ pub async fn get_tables(pool: &PgPool) -> Result<Vec<TableInfo>, String> {
         .map(|row| TableInfo {
             schema: row.get("schema"),
             name: row.get("name"),
-            row_count: row.get("row_count"),
+            row_count: row.get::<Option<i64>, _>("row_count").map(|v| v as u64),
         })
         .collect();
     

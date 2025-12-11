@@ -164,7 +164,7 @@ pub async fn get_tables(pool: &SqlServerPool) -> Result<Vec<TableInfo>, String> 
         let name: String = row.get::<&str, _>("table_name")
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let row_count: Option<i64> = row.get::<i64, _>("row_count");
+        let row_count: Option<u64> = row.get::<i64, _>("row_count").map(|v| v as u64);
         
         debug!("SQL Server: Found table {}.{}", schema, name);
         

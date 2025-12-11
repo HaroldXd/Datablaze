@@ -31,6 +31,7 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
     const [expandedConnections, setExpandedConnections] = useState<Set<string>>(new Set());
     const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set());
     const [reconnecting, setReconnecting] = useState<string | null>(null);
+    const schemaRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
     const [editModal, setEditModal] = useState<SavedConnection | null>(null);
     const [editPassword, setEditPassword] = useState('');
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; table: string } | null>(null);
@@ -150,8 +151,22 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
 
             setTables(fetchedTables);
 
-            // Ensure the new DB node is expanded
-            setExpandedDatabases(prev => new Set(prev).add(dbName));
+            // Close all other databases and open only the new one
+            setExpandedDatabases(new Set([dbName]));
+
+            // Auto-expand the first schema and scroll to it
+            if (fetchedTables.length > 0) {
+                const firstSchema = fetchedTables[0].schema;
+                setExpandedSchemas(new Set([firstSchema]));
+                
+                // Scroll to the schema after a short delay to ensure DOM is updated
+                setTimeout(() => {
+                    const schemaElement = schemaRefs.current[firstSchema];
+                    if (schemaElement) {
+                        schemaElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                }, 100);
+            }
 
         } catch (err) {
             console.error('Failed to connect to database:', err);
@@ -656,6 +671,7 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                     Object.entries(tablesBySchema).map(([schema, schemaTables]) => (
                         <div key={schema}>
                             <div
+                                ref={(el) => schemaRefs.current[schema] = el}
                                 className="tree-node-content"
                                 onClick={() => toggleSchema(schema)}
                                 style={{ paddingLeft: basePadding }}

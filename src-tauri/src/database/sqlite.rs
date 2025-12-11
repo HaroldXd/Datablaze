@@ -76,7 +76,8 @@ pub async fn get_tables(pool: &SqlitePool) -> Result<Vec<TableInfo>, String> {
             .fetch_one(pool)
             .await
             .ok()
-            .and_then(|r| r.try_get::<i64, _>("count").ok());
+            .and_then(|r| r.try_get::<i64, _>("count").ok())
+            .map(|v| v as u64);
         
         tables.push(TableInfo {
             schema: row.get("schema"),

@@ -55,9 +55,9 @@ pub async fn get_tables(pool: &MySqlPool) -> Result<Vec<TableInfo>, String> {
             TABLE_NAME as name,
             TABLE_ROWS as row_count
         FROM information_schema.TABLES 
-        WHERE TABLE_SCHEMA NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')
+        WHERE TABLE_SCHEMA = DATABASE()
         AND TABLE_TYPE = 'BASE TABLE'
-        ORDER BY TABLE_SCHEMA, TABLE_NAME
+        ORDER BY TABLE_NAME
     "#;
     
     let rows = sqlx::query(query)
@@ -70,7 +70,7 @@ pub async fn get_tables(pool: &MySqlPool) -> Result<Vec<TableInfo>, String> {
         .map(|row| TableInfo {
             schema: row.get("schema"),
             name: row.get("name"),
-            row_count: row.get::<Option<i64>, _>("row_count"),
+            row_count: row.get::<Option<u64>, _>("row_count"),
         })
         .collect();
     

@@ -30,7 +30,7 @@ pub struct Connection {
 pub struct TableInfo {
     pub name: String,
     pub schema: String,
-    pub row_count: Option<i64>,
+    pub row_count: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
