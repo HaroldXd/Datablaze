@@ -37,7 +37,7 @@ import { DatabaseIcon } from './components/UI/DatabaseIcon';
 
 import './index.css';
 
-const appVersion = '0.2.1';
+const appVersion = '0.2.2';
 
 interface FkViewContext {
     id: string;
