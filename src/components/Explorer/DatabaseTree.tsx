@@ -671,7 +671,7 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                     Object.entries(tablesBySchema).map(([schema, schemaTables]) => (
                         <div key={schema}>
                             <div
-                                ref={(el) => schemaRefs.current[schema] = el}
+                                ref={(el) => { schemaRefs.current[schema] = el; }}
                                 className="tree-node-content"
                                 onClick={() => toggleSchema(schema)}
                                 style={{ paddingLeft: basePadding }}
