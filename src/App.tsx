@@ -37,7 +37,7 @@ import { DatabaseIcon } from './components/UI/DatabaseIcon';
 
 import './index.css';
 
-const appVersion = '0.2.2';
+const appVersion = '0.2.3';
 
 interface FkViewContext {
     id: string;
@@ -120,7 +120,7 @@ function App() {
 
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-    
+
     // Tab context menu state
     const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; tab: typeof queryTabs[0] } | null>(null);
 
@@ -176,10 +176,10 @@ CREATE TABLE new_table (
     const handleCloseTabsToRight = (tabId: string) => {
         const tabIndex = queryTabs.findIndex(t => t.id === tabId);
         if (tabIndex === -1) return;
-        
+
         const tabsToClose = queryTabs.slice(tabIndex + 1);
         const hasUnsavedContent = tabsToClose.some(t => t.sql.trim());
-        
+
         if (hasUnsavedContent) {
             setConfirmDialog({
                 isOpen: true,
@@ -198,11 +198,11 @@ CREATE TABLE new_table (
         }
         setTabContextMenu(null);
     };
-    
+
     const handleCloseOtherTabs = (tabId: string) => {
         const tabsToClose = queryTabs.filter(t => t.id !== tabId);
         const hasUnsavedContent = tabsToClose.some(t => t.sql.trim());
-        
+
         if (hasUnsavedContent) {
             setConfirmDialog({
                 isOpen: true,
@@ -221,10 +221,10 @@ CREATE TABLE new_table (
         }
         setTabContextMenu(null);
     };
-    
+
     const handleCloseAllTabs = () => {
         const hasUnsavedContent = queryTabs.some(t => t.sql.trim());
-        
+
         if (hasUnsavedContent) {
             setConfirmDialog({
                 isOpen: true,
@@ -243,7 +243,7 @@ CREATE TABLE new_table (
         }
         setTabContextMenu(null);
     };
-    
+
     const handleForceCloseAllTabs = () => {
         queryTabs.forEach(t => removeQueryTab(t.id));
         setTabContextMenu(null);
@@ -421,7 +421,7 @@ CREATE TABLE new_table (
     useEffect(() => {
         closeFkSidebar();
     }, [activeTabId]);
-    
+
     // Close tab context menu on click outside or when other menus open
     useEffect(() => {
         const handleClick = () => setTabContextMenu(null);
@@ -442,7 +442,7 @@ CREATE TABLE new_table (
         if (!activeConn) return `SELECT * FROM ${table} LIMIT ${limit};`;
 
         const dbType = activeConn.config.db_type;
-        
+
         switch (dbType) {
             case 'SQLServer':
                 return `SELECT TOP ${limit} * FROM ${table};`;
@@ -481,18 +481,18 @@ CREATE TABLE new_table (
         if (!activeConnectionId) return;
 
         const sql = getSelectAllSql(table, settings.defaultRowLimit);
-        
+
         // Create a new tab for this table query
         addQueryTab();
-        
+
         // Wait a bit for the tab to be created and get the new tab
         setTimeout(async () => {
             const tabs = useConnectionStore.getState().queryTabs;
             const newTab = tabs[tabs.length - 1];
-            
+
             if (newTab) {
-                updateTabSql(newTab.id, sql);
-                
+                updateTabSql(newTab.id, sql, table);
+
                 console.log('[Frontend] Starting table data request:', table);
                 updateTabResult(newTab.id, null, true, null);
                 closeFkSidebar();
@@ -570,7 +570,7 @@ CREATE TABLE new_table (
             const quotedValue = typeof fkValue === 'string' ? `'${fkValue}'` : fkValue;
             const activeConn = connections.find(c => c.id === activeConnectionId);
             const isSqlServer = activeConn?.config.db_type === 'SQLServer';
-            const sql = isSqlServer 
+            const sql = isSqlServer
                 ? `SELECT TOP 1 * FROM ${tableName} WHERE id = ${quotedValue};`
                 : `SELECT * FROM ${tableName} WHERE id = ${quotedValue} LIMIT 1;`;
             const queryResult = await executeQuery(activeConnectionId, sql);
@@ -1028,6 +1028,8 @@ CREATE TABLE new_table (
                                     tables={tables}
                                     showImagePreviews={settings.showImagePreviews}
                                     maxImagePreviewHeight={settings.maxImagePreviewHeight}
+                                    connectionId={activeConnectionId || undefined}
+                                    tableName={activeTab?.tableName}
                                 />
                             </div>
                         </div>
@@ -1232,7 +1234,7 @@ CREATE TABLE new_table (
                     </>
                 )
             }
-            
+
             {/* Tab Context Menu */}
             {tabContextMenu && (
                 <div
@@ -1270,7 +1272,7 @@ CREATE TABLE new_table (
                         <X size={14} />
                         Close Tab
                     </div>
-                    
+
                     {queryTabs.findIndex(t => t.id === tabContextMenu.tab.id) < queryTabs.length - 1 && (
                         <div
                             className="context-menu-item"
@@ -1289,7 +1291,7 @@ CREATE TABLE new_table (
                             Close Tabs to the Right
                         </div>
                     )}
-                    
+
                     {queryTabs.length > 1 && (
                         <div
                             className="context-menu-item"
@@ -1308,9 +1310,9 @@ CREATE TABLE new_table (
                             Close Other Tabs
                         </div>
                     )}
-                    
+
                     <div style={{ height: '1px', background: 'var(--border-color)', margin: '4px 0' }} />
-                    
+
                     <div
                         className="context-menu-item"
                         onClick={handleCloseAllTabs}
@@ -1327,7 +1329,7 @@ CREATE TABLE new_table (
                         <X size={14} />
                         Close All Tabs
                     </div>
-                    
+
                     <div
                         className="context-menu-item"
                         onClick={handleForceCloseAllTabs}

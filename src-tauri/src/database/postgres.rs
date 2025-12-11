@@ -139,7 +139,7 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
     let mut rows = Vec::new();
     let mut stream = sqlx::query(sql).fetch(pool);
     let mut truncated = false;
-    let limit = 2000; // Hard limit for safety
+    let limit = 50000; // Higher limit - pagination is handled in the frontend
 
     while let Some(row) = stream.try_next().await.map_err(|e| format!("Query execution failed: {}", e))? {
         rows.push(row);

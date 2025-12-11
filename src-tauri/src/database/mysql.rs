@@ -172,30 +172,50 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str) -> Result<QueryResult, S
 }
 
 fn row_value_to_json(row: &sqlx::mysql::MySqlRow, idx: usize) -> serde_json::Value {
-    // Try different types
-    if let Ok(v) = row.try_get::<i32, _>(idx) {
+    // Try unsigned integers first (common for MySQL IDs)
+    if let Ok(v) = row.try_get::<u64, _>(idx) {
         return serde_json::Value::Number(v.into());
     }
+    if let Ok(v) = row.try_get::<u32, _>(idx) {
+        return serde_json::Value::Number(v.into());
+    }
+    // Then signed integers
     if let Ok(v) = row.try_get::<i64, _>(idx) {
         return serde_json::Value::Number(v.into());
     }
+    if let Ok(v) = row.try_get::<i32, _>(idx) {
+        return serde_json::Value::Number(v.into());
+    }
+    if let Ok(v) = row.try_get::<i16, _>(idx) {
+        return serde_json::Value::Number(v.into());
+    }
+    if let Ok(v) = row.try_get::<i8, _>(idx) {
+        return serde_json::Value::Number(v.into());
+    }
+    // Floats
     if let Ok(v) = row.try_get::<f64, _>(idx) {
         return serde_json::json!(v);
     }
-    if let Ok(v) = row.try_get::<bool, _>(idx) {
-        return serde_json::Value::Bool(v);
+    if let Ok(v) = row.try_get::<f32, _>(idx) {
+        return serde_json::json!(v);
     }
+    // Strings
     if let Ok(v) = row.try_get::<String, _>(idx) {
         return serde_json::Value::String(v);
-    }
-    if let Ok(v) = row.try_get::<serde_json::Value, _>(idx) {
-        return v;
     }
     if let Ok(v) = row.try_get::<Option<String>, _>(idx) {
         return match v {
             Some(s) => serde_json::Value::String(s),
             None => serde_json::Value::Null,
         };
+    }
+    // JSON values
+    if let Ok(v) = row.try_get::<serde_json::Value, _>(idx) {
+        return v;
+    }
+    // Boolean last (to avoid TINYINT being converted to bool)
+    if let Ok(v) = row.try_get::<bool, _>(idx) {
+        return serde_json::Value::Bool(v);
     }
     
     serde_json::Value::Null

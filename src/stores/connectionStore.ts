@@ -36,7 +36,7 @@ interface ConnectionState {
     addQueryTab: () => void;
     removeQueryTab: (id: string) => void;
     setActiveTab: (id: string) => void;
-    updateTabSql: (id: string, sql: string) => void;
+    updateTabSql: (id: string, sql: string, tableName?: string) => void;
     updateTabConnection: (id: string, connectionId: string) => void;
     setConnecting: (connecting: boolean) => void;
     setError: (error: string | null) => void;
@@ -51,9 +51,9 @@ let tabCounter = 1;
 // Helper function to generate tab title from SQL
 function generateTabTitle(sql: string): string {
     const trimmed = sql.trim().toUpperCase();
-    
+
     if (!trimmed) return `Query ${tabCounter}`;
-    
+
     // SELECT queries
     if (trimmed.startsWith('SELECT')) {
         // Extract table name from "SELECT ... FROM table_name"
@@ -64,7 +64,7 @@ function generateTabTitle(sql: string): string {
         }
         return 'SELECT';
     }
-    
+
     // INSERT queries
     if (trimmed.startsWith('INSERT')) {
         const intoMatch = sql.match(/INTO\s+([\w.]+)/i);
@@ -74,7 +74,7 @@ function generateTabTitle(sql: string): string {
         }
         return 'INSERT';
     }
-    
+
     // UPDATE queries
     if (trimmed.startsWith('UPDATE')) {
         const updateMatch = sql.match(/UPDATE\s+([\w.]+)/i);
@@ -84,7 +84,7 @@ function generateTabTitle(sql: string): string {
         }
         return 'UPDATE';
     }
-    
+
     // DELETE queries
     if (trimmed.startsWith('DELETE')) {
         const fromMatch = sql.match(/FROM\s+([\w.]+)/i);
@@ -94,7 +94,7 @@ function generateTabTitle(sql: string): string {
         }
         return 'DELETE';
     }
-    
+
     // CREATE queries
     if (trimmed.startsWith('CREATE')) {
         if (trimmed.includes('TABLE')) {
@@ -107,7 +107,7 @@ function generateTabTitle(sql: string): string {
         }
         return 'CREATE';
     }
-    
+
     // DROP queries
     if (trimmed.startsWith('DROP')) {
         const dropMatch = sql.match(/DROP\s+\w+\s+([\w.]+)/i);
@@ -117,7 +117,7 @@ function generateTabTitle(sql: string): string {
         }
         return 'DROP';
     }
-    
+
     // ALTER queries
     if (trimmed.startsWith('ALTER')) {
         const alterMatch = sql.match(/ALTER\s+\w+\s+([\w.]+)/i);
@@ -127,7 +127,7 @@ function generateTabTitle(sql: string): string {
         }
         return 'ALTER';
     }
-    
+
     // Default to first word of query
     const firstWord = trimmed.split(/\s+/)[0];
     return firstWord.length > 15 ? firstWord.substring(0, 15) + '...' : firstWord;
@@ -247,14 +247,14 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
 
     setActiveTab: (id) => set({ activeTabId: id }),
 
-    updateTabSql: (id, sql) =>
+    updateTabSql: (id, sql, tableName?) =>
         set((state) => ({
             queryTabs: state.queryTabs.map((t) => {
                 if (t.id === id) {
                     // Only update title if it's a generic "Query N" title or if SQL changes significantly
                     const shouldUpdateTitle = t.title.match(/^Query \d+$/) || !t.sql.trim();
                     const newTitle = shouldUpdateTitle ? generateTabTitle(sql) : t.title;
-                    return { ...t, sql, title: newTitle };
+                    return { ...t, sql, title: newTitle, tableName: tableName ?? t.tableName };
                 }
                 return t;
             }),
@@ -287,7 +287,7 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
 
     updateTabResult: (id, result, isExecuting, error) =>
         set((state) => ({
-            queryTabs: state.queryTabs.map((t) => 
+            queryTabs: state.queryTabs.map((t) =>
                 t.id === id ? { ...t, result, isExecuting, error } : t
             ),
         })),
