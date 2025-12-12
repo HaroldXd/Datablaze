@@ -269,10 +269,11 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
 
     const selectAllRows = () => {
         if (!result) return;
-        if (selectedRows.size === result.rows.length) {
+        const currentSortedRows = getSortedRows();
+        if (selectedRows.size === currentSortedRows.length) {
             setSelectedRows(new Set());
         } else {
-            setSelectedRows(new Set(result.rows.map((_, i) => i)));
+            setSelectedRows(new Set(currentSortedRows.map((_, i) => i)));
         }
     };
 
