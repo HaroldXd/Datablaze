@@ -1079,7 +1079,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                 )}
 
                 {viewMode === 'json' && (
-                    <JsonViewer data={result.rows} />
+                    <JsonViewer data={paginatedRows} />
                 )}
             </div>
 
