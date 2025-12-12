@@ -269,16 +269,17 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
 
     const selectAllRows = () => {
         if (!result) return;
-        if (selectedRows.size === result.rows.length) {
+        const currentSortedRows = getSortedRows();
+        if (selectedRows.size === currentSortedRows.length) {
             setSelectedRows(new Set());
         } else {
-            setSelectedRows(new Set(result.rows.map((_, i) => i)));
+            setSelectedRows(new Set(currentSortedRows.map((_, i) => i)));
         }
     };
 
     const copySelectedAsJSON = () => {
         if (!result) return;
-        const rows = Array.from(selectedRows).map(i => result.rows[i]);
+        const rows = Array.from(selectedRows).map(i => sortedRows[i]);
         navigator.clipboard.writeText(JSON.stringify(rows, null, 2));
         setCopyFeedback('json');
         setTimeout(() => setCopyFeedback(null), 2000);
@@ -286,7 +287,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
 
     const copySelectedAsCSV = () => {
         if (!result) return;
-        const rows = Array.from(selectedRows).map(i => result.rows[i]);
+        const rows = Array.from(selectedRows).map(i => sortedRows[i]);
         const headers = result.columns.map(c => c.name).join(',');
         const csvRows = rows.map(row =>
             result.columns.map(col => {
