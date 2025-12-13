@@ -87,6 +87,7 @@ pub async fn get_table_structure(pool: &MySqlPool, table: &str) -> Result<TableS
             COLUMN_KEY as column_key
         FROM information_schema.COLUMNS
         WHERE TABLE_NAME = ?
+        AND TABLE_SCHEMA = DATABASE()
         ORDER BY ORDINAL_POSITION
     "#;
     
@@ -98,19 +99,48 @@ pub async fn get_table_structure(pool: &MySqlPool, table: &str) -> Result<TableS
     
     let columns: Vec<ColumnInfo> = rows
         .iter()
-        .map(|row| ColumnInfo {
-            name: row.get("column_name"),
-            data_type: row.get("data_type"),
-            is_nullable: row.get::<String, _>("is_nullable") == "YES",
-            is_primary_key: row.get::<String, _>("column_key") == "PRI",
-            default_value: row.get("column_default"),
-            is_unique: None,
-            is_foreign_key: None,
-            foreign_key_table: None,
-            foreign_key_column: None,
-            is_auto_increment: None,
-            max_length: None,
-            check_constraint: None,
+        .map(|row| {
+            // Helper to get string, trying String first then bytes
+            let get_string = |col: &str| -> String {
+                if let Ok(v) = row.try_get::<String, _>(col) {
+                    return v;
+                }
+                if let Ok(v) = row.try_get::<Vec<u8>, _>(col) {
+                    return String::from_utf8_lossy(&v).to_string();
+                }
+                String::new()
+            };
+            
+            let get_optional_string = |col: &str| -> Option<String> {
+                if let Ok(v) = row.try_get::<Option<String>, _>(col) {
+                    return v;
+                }
+                if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(col) {
+                    return v.map(|bytes| String::from_utf8_lossy(&bytes).to_string());
+                }
+                None
+            };
+            
+            let column_name = get_string("column_name");
+            let data_type = get_string("data_type");
+            let is_nullable = get_string("is_nullable");
+            let column_default = get_optional_string("column_default");
+            let column_key = get_string("column_key");
+            
+            ColumnInfo {
+                name: column_name,
+                data_type,
+                is_nullable: is_nullable == "YES",
+                is_primary_key: column_key == "PRI",
+                default_value: column_default,
+                is_unique: None,
+                is_foreign_key: None,
+                foreign_key_table: None,
+                foreign_key_column: None,
+                is_auto_increment: None,
+                max_length: None,
+                check_constraint: None,
+            }
         })
         .collect();
     
@@ -123,6 +153,35 @@ pub async fn get_table_structure(pool: &MySqlPool, table: &str) -> Result<TableS
 pub async fn execute_query(pool: &MySqlPool, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     
+    let sql_upper = sql.trim().to_uppercase();
+    
+    // For UPDATE, INSERT, DELETE - use execute which returns affected rows
+    if sql_upper.starts_with("UPDATE") || sql_upper.starts_with("INSERT") || sql_upper.starts_with("DELETE") {
+        log::info!("MySQL: Executing modification query: {}", sql);
+        
+        let result = sqlx::query(sql)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Query execution failed: {}", e))?;
+        
+        let affected = result.rows_affected();
+        log::info!("MySQL: {} rows affected", affected);
+        
+        let execution_time = start.elapsed().as_millis() as u64;
+        
+        return Ok(QueryResult {
+            columns: vec![ResultColumn {
+                name: "affected_rows".to_string(),
+                type_name: "BIGINT".to_string(),
+            }],
+            rows: vec![serde_json::json!({"affected_rows": affected})],
+            row_count: affected as usize,
+            execution_time_ms: execution_time,
+            truncated: false,
+        });
+    }
+    
+    // For SELECT queries
     let rows = sqlx::query(sql)
         .fetch_all(pool)
         .await
@@ -199,6 +258,19 @@ fn row_value_to_json(row: &sqlx::mysql::MySqlRow, idx: usize) -> serde_json::Val
     if let Ok(v) = row.try_get::<f32, _>(idx) {
         return serde_json::json!(v);
     }
+    // Date and Time types - IMPORTANT for MySQL dates
+    if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(idx) {
+        return serde_json::Value::String(v.format("%Y-%m-%d").to_string());
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(idx) {
+        return serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S").to_string());
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveTime, _>(idx) {
+        return serde_json::Value::String(v.format("%H:%M:%S").to_string());
+    }
+    if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(idx) {
+        return serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S").to_string());
+    }
     // Strings
     if let Ok(v) = row.try_get::<String, _>(idx) {
         return serde_json::Value::String(v);
@@ -208,6 +280,15 @@ fn row_value_to_json(row: &sqlx::mysql::MySqlRow, idx: usize) -> serde_json::Val
             Some(s) => serde_json::Value::String(s),
             None => serde_json::Value::Null,
         };
+    }
+    // Try bytes (BLOB, BINARY, VARBINARY) - convert to string if valid UTF-8, otherwise hex
+    if let Ok(v) = row.try_get::<Vec<u8>, _>(idx) {
+        // Try to convert to UTF-8 string first
+        if let Ok(s) = String::from_utf8(v.clone()) {
+            return serde_json::Value::String(s);
+        }
+        // Otherwise return as hex
+        return serde_json::Value::String(format!("0x{}", hex::encode(v)));
     }
     // JSON values
     if let Ok(v) = row.try_get::<serde_json::Value, _>(idx) {
@@ -230,9 +311,16 @@ pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<String>, String> {
     let databases: Vec<String> = rows
         .iter()
         .filter_map(|row| {
-            let db: String = row.get(0);
+            // Try String first, then bytes
+            let db: String = row.try_get::<String, _>(0)
+                .or_else(|_| {
+                    row.try_get::<Vec<u8>, _>(0)
+                        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+                })
+                .unwrap_or_default();
+            
             // Exclude system databases
-            if !["information_schema", "mysql", "performance_schema", "sys"].contains(&db.as_str()) {
+            if !db.is_empty() && !["information_schema", "mysql", "performance_schema", "sys"].contains(&db.as_str()) {
                 Some(db)
             } else {
                 None
@@ -242,3 +330,4 @@ pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<String>, String> {
     
     Ok(databases)
 }
+

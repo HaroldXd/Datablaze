@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "datablaze"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bb8",
  "bb8-tiberius",

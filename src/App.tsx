@@ -61,7 +61,9 @@ function App() {
         removeQueryTab,
         setActiveTab,
         updateTabSql,
+        updateTabConnection,
         loadSavedConnections,
+        loadAppState,
         tables,
         setTables,
         savedQueries,
@@ -77,7 +79,6 @@ function App() {
     const [leftSidebarWidth, setLeftSidebarWidth] = useState(280);
     const [tableFilter, setTableFilter] = useState('');
 
-    // FK Sidebar state
     // FK Sidebar state
     const [fkStack, setFkStack] = useState<FkViewContext[]>([]);
     const [sidebarWidth, setSidebarWidth] = useState(350);
@@ -108,6 +109,17 @@ function App() {
         onConfirm: () => { },
     });
 
+    // Load app state (tabs, settings) on startup
+    useEffect(() => {
+        loadAppState();
+        // Load persisted editor/sidebar dimensions
+        import('./lib/storage').then(({ getAppState }) => {
+            const appState = getAppState();
+            if (appState.editorHeight) setEditorHeight(appState.editorHeight);
+            if (appState.leftSidebarWidth) setLeftSidebarWidth(appState.leftSidebarWidth);
+        });
+    }, [loadAppState]);
+
     // Load saved connections on startup
     useEffect(() => {
         loadSavedConnections();
@@ -117,6 +129,71 @@ function App() {
     useEffect(() => {
         loadSavedQueries();
     }, [loadSavedQueries]);
+
+    // Auto-reconnect to last active connection on startup
+    useEffect(() => {
+        const autoReconnect = async () => {
+            // Only try to reconnect if we have saved connections but no active connection
+            if (savedConnections.length > 0 && !activeConnectionId) {
+                import('./lib/storage').then(async ({ getAppState }) => {
+                    const appState = getAppState();
+                    console.log('[App] Auto-reconnect check:', {
+                        lastActiveConnectionName: appState.lastActiveConnectionName,
+                        lastActiveDatabase: appState.lastActiveDatabase
+                    });
+
+                    if (appState.lastActiveConnectionName) {
+                        // Try exact match first
+                        let saved = savedConnections.find(s => s.config.name === appState.lastActiveConnectionName);
+
+                        // If not found, try matching the base name (before " / ")
+                        if (!saved) {
+                            const baseName = appState.lastActiveConnectionName.split(' / ')[0];
+                            saved = savedConnections.find(s => s.config.name === baseName);
+                            console.log('[App] Trying base name match:', baseName, 'Found:', !!saved);
+                        }
+
+                        // If still not found, try matching by name containing
+                        if (!saved) {
+                            const lastName = appState.lastActiveConnectionName;
+                            saved = savedConnections.find(s =>
+                                lastName.includes(s.config.name || '') ||
+                                (s.config.name || '').includes(lastName)
+                            );
+                        }
+
+                        if (saved && saved.config.password) {
+                            // Create connection config, using saved database if available
+                            const configToUse = { ...saved.config };
+                            if (appState.lastActiveDatabase) {
+                                configToUse.database = appState.lastActiveDatabase;
+                                // Update name to show database
+                                configToUse.name = `${saved.config.name} / ${appState.lastActiveDatabase}`;
+                            }
+
+                            console.log('[App] Auto-reconnecting to:', configToUse.name, 'database:', configToUse.database);
+                            try {
+                                const connection = await connectDatabase(configToUse);
+                                addConnection(connection, false);
+                                const fetchedTables = await getTables(connection.id);
+                                setTables(fetchedTables);
+                                setActiveConnection(connection.id);
+                                console.log('[App] Auto-reconnect successful, tables:', fetchedTables.length);
+                            } catch (err) {
+                                console.error('[App] Auto-reconnect failed:', err);
+                            }
+                        } else {
+                            console.log('[App] Connection not found or no password:', {
+                                found: !!saved,
+                                hasPassword: saved?.config?.password ? 'yes' : 'no'
+                            });
+                        }
+                    }
+                });
+            }
+        };
+        autoReconnect();
+    }, [savedConnections, activeConnectionId, addConnection, setTables, setActiveConnection]);
 
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -459,10 +536,41 @@ CREATE TABLE new_table (
     };
 
     const handleExecute = async () => {
-        if (!activeConnectionId || !activeTab?.sql?.trim()) {
+        if (!activeTab?.sql?.trim()) {
             if (activeTab) {
-                updateTabResult(activeTab.id, null, false, 'Please connect to a database and enter a query');
+                updateTabResult(activeTab.id, null, false, 'Please enter a query');
             }
+            return;
+        }
+
+        // If no active connection, try to reconnect using saved connection name
+        let connectionIdToUse = activeConnectionId;
+
+        if (!connectionIdToUse && activeTab.connectionName) {
+            // Try to find and connect to the saved connection
+            const saved = savedConnections.find(s => s.config.name === activeTab.connectionName);
+            if (saved) {
+                updateTabResult(activeTab.id, null, true, null);
+                try {
+                    const connection = await connectDatabase(saved.config);
+                    addConnection(connection, false);
+                    const fetchedTables = await getTables(connection.id);
+                    setTables(fetchedTables);
+                    setActiveConnection(connection.id);
+                    updateTabConnection(activeTab.id, connection.id);
+                    connectionIdToUse = connection.id;
+                } catch (err) {
+                    updateTabResult(activeTab.id, null, false, `Failed to reconnect to "${activeTab.connectionName}": ${err}`);
+                    return;
+                }
+            } else {
+                updateTabResult(activeTab.id, null, false, `Connection "${activeTab.connectionName}" not found. Please connect to a database.`);
+                return;
+            }
+        }
+
+        if (!connectionIdToUse) {
+            updateTabResult(activeTab.id, null, false, 'Please connect to a database first');
             return;
         }
 
@@ -470,7 +578,7 @@ CREATE TABLE new_table (
         closeFkSidebar();
 
         try {
-            const queryResult = await executeQuery(activeConnectionId, activeTab.sql);
+            const queryResult = await executeQuery(connectionIdToUse, activeTab.sql);
             updateTabResult(activeTab.id, queryResult, false, null);
         } catch (err) {
             updateTabResult(activeTab.id, null, false, String(err));
@@ -833,6 +941,10 @@ CREATE TABLE new_table (
                         document.removeEventListener('mouseup', onMouseUp);
                         document.body.style.cursor = '';
                         document.body.style.userSelect = '';
+                        // Persist sidebar width
+                        import('./lib/storage').then(({ saveAppState }) => {
+                            saveAppState({ leftSidebarWidth: leftSidebarWidth });
+                        });
                     };
 
                     document.body.style.cursor = 'ew-resize';
@@ -853,51 +965,96 @@ CREATE TABLE new_table (
             <main className="main-content">
                 {/* Tabs Bar */}
                 <div className="tabs-bar">
-                    {queryTabs.map((tab) => (
+                    {/* Scroll left button */}
+                    {queryTabs.length > 5 && (
                         <button
-                            key={tab.id}
-                            className={`tab ${activeTabId === tab.id ? 'active' : ''}`}
-                            onClick={() => setActiveTab(tab.id)}
-                            onContextMenu={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                // Close other context menus
-                                window.dispatchEvent(new Event('close-context-menus'));
-                                setTabContextMenu({ x: e.clientX, y: e.clientY, tab });
+                            className="tabs-scroll-btn"
+                            onClick={() => {
+                                const container = document.querySelector('.tabs-scroll-container');
+                                if (container) container.scrollBy({ left: -150, behavior: 'smooth' });
                             }}
-                            onMouseDown={(e) => {
-                                // Middle click to close tab
-                                if (e.button === 1) {
-                                    e.preventDefault();
-                                    handleCloseTab(tab);
-                                }
-                            }}
-                            onAuxClick={(e: React.MouseEvent) => {
-                                // Also handle middle click via auxclick
-                                if (e.button === 1) {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleCloseTab(tab);
-                                }
-                            }}
+                            title="Scroll left"
                         >
-                            <FileCode size={14} />
-                            {tab.title}
-                            {tab.sql.trim() && <span className="tab-unsaved" title="Has content" />}
-                            <span
-                                className="tab-close"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCloseTab(tab);
-                                }}
-                            >
-                                <X size={12} />
-                            </span>
+                            <ChevronDown size={14} style={{ transform: 'rotate(90deg)' }} />
                         </button>
-                    ))}
+                    )}
+
+                    {/* Scrollable tabs container */}
+                    <div className="tabs-scroll-container">
+                        {queryTabs.map((tab) => (
+                            <button
+                                key={tab.id}
+                                className={`tab ${activeTabId === tab.id ? 'active' : ''}`}
+                                onClick={() => setActiveTab(tab.id)}
+                                onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    window.dispatchEvent(new Event('close-context-menus'));
+                                    setTabContextMenu({ x: e.clientX, y: e.clientY, tab });
+                                }}
+                                onMouseDown={(e) => {
+                                    if (e.button === 1) {
+                                        e.preventDefault();
+                                        handleCloseTab(tab);
+                                    }
+                                }}
+                                onAuxClick={(e: React.MouseEvent) => {
+                                    if (e.button === 1) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleCloseTab(tab);
+                                    }
+                                }}
+                                title={tab.connectionName ? `${tab.title}\n🔗 ${tab.connectionName}` : tab.title}
+                            >
+                                <FileCode size={14} className="tab-icon" />
+                                <span className="tab-title">{tab.title}</span>
+                                {tab.connectionName && (
+                                    <span
+                                        className="tab-connection-badge"
+                                        title={`Connected to: ${tab.connectionName}`}
+                                    >
+                                        <Database size={10} />
+                                    </span>
+                                )}
+                                {tab.sql.trim() && <span className="tab-unsaved" title="Has content" />}
+                                <span
+                                    className="tab-close"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCloseTab(tab);
+                                    }}
+                                >
+                                    <X size={12} />
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Scroll right button */}
+                    {queryTabs.length > 5 && (
+                        <button
+                            className="tabs-scroll-btn"
+                            onClick={() => {
+                                const container = document.querySelector('.tabs-scroll-container');
+                                if (container) container.scrollBy({ left: 150, behavior: 'smooth' });
+                            }}
+                            title="Scroll right"
+                        >
+                            <ChevronDown size={14} style={{ transform: 'rotate(-90deg)' }} />
+                        </button>
+                    )}
+
                     <button className="add-tab" onClick={addQueryTab} title="New Tab (Ctrl+T)">
                         <Plus size={16} />
                     </button>
+
+                    {/* Tab count badge when many tabs */}
+                    {queryTabs.length > 3 && (
+                        <span className="tabs-count-badge" title={`${queryTabs.length} tabs open`}>
+                            {queryTabs.length}
+                        </span>
+                    )}
 
                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <button
@@ -1002,6 +1159,10 @@ CREATE TABLE new_table (
                                         document.removeEventListener('mouseup', onMouseUp);
                                         document.body.style.cursor = '';
                                         document.body.style.userSelect = '';
+                                        // Persist editor height
+                                        import('./lib/storage').then(({ saveAppState }) => {
+                                            saveAppState({ editorHeight: editorHeight });
+                                        });
                                     };
 
                                     // Set cursor and disable selection during drag

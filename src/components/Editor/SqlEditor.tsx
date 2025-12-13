@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import Editor, { Monaco } from '@monaco-editor/react';
 import { useConnectionStore } from '../../stores/connectionStore';
+import { TableInfo } from '../../lib/tauri';
 
 interface SqlEditorProps {
     value: string;
@@ -9,13 +10,60 @@ interface SqlEditorProps {
     isDarkMode?: boolean;
 }
 
+interface TableAlias {
+    alias: string;
+    tableName: string;
+}
+
+// Parse SQL to extract table aliases from JOINs and FROM clauses
+function parseTableAliases(sql: string, tables: TableInfo[]): TableAlias[] {
+    const aliases: TableAlias[] = [];
+    const tableNames = tables.map(t => t.name.toLowerCase());
+
+    // Patterns to match: 
+    // - FROM table_name alias
+    // - FROM table_name AS alias
+    // - JOIN table_name alias
+    // - JOIN table_name AS alias
+    const patterns = [
+        // FROM table alias (without AS)
+        /FROM\s+(\w+)\s+(?!AS\b|WHERE\b|INNER\b|LEFT\b|RIGHT\b|FULL\b|CROSS\b|JOIN\b|ON\b|ORDER\b|GROUP\b|HAVING\b|LIMIT\b|OFFSET\b)(\w+)/gi,
+        // FROM table AS alias
+        /FROM\s+(\w+)\s+AS\s+(\w+)/gi,
+        // JOIN table alias (without AS)
+        /JOIN\s+(\w+)\s+(?!AS\b|ON\b)(\w+)/gi,
+        // JOIN table AS alias
+        /JOIN\s+(\w+)\s+AS\s+(\w+)/gi,
+    ];
+
+    for (const pattern of patterns) {
+        let match;
+        while ((match = pattern.exec(sql)) !== null) {
+            const tableName = match[1];
+            const alias = match[2];
+
+            // Verify it's a real table
+            if (tableNames.includes(tableName.toLowerCase()) && alias && alias.length > 0) {
+                aliases.push({ alias: alias.toLowerCase(), tableName });
+            }
+        }
+    }
+
+    return aliases;
+}
+
 export const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute, isDarkMode = true }) => {
     const onExecuteRef = useRef(onExecute);
     const monacoRef = useRef<Monaco | null>(null);
+    const editorRef = useRef<any>(null);
     const completionProviderRef = useRef<any>(null);
+    const pendingFetchRef = useRef<Set<string>>(new Set());
 
-    // Get tables from the store
+    // Get tables and column getter from the store
     const tables = useConnectionStore((state) => state.tables);
+    const getTableColumns = useConnectionStore((state) => state.getTableColumns);
+    const setTableStructure = useConnectionStore((state) => state.setTableStructure);
+    const activeConnectionId = useConnectionStore((state) => state.activeConnectionId);
 
     useEffect(() => {
         onExecuteRef.current = onExecute;
@@ -23,6 +71,41 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute
 
     const handleEditorChange = (newValue: string | undefined) => {
         onChange(newValue || '');
+    };
+
+    // Function to fetch table columns if not cached
+    const fetchTableColumnsIfNeeded = async (tableName: string): Promise<string[]> => {
+        const lowerName = tableName.toLowerCase();
+
+        // Check if already cached
+        const existing = getTableColumns(tableName);
+        if (existing.length > 0) {
+            return existing;
+        }
+
+        // Check if already fetching
+        if (pendingFetchRef.current.has(lowerName)) {
+            return [];
+        }
+
+        // Check if we have a connection
+        if (!activeConnectionId) {
+            return [];
+        }
+
+        // Fetch the structure
+        pendingFetchRef.current.add(lowerName);
+        try {
+            const { getTableStructure } = await import('../../lib/tauri');
+            const structure = await getTableStructure(activeConnectionId, tableName);
+            setTableStructure(tableName, structure);
+            return structure.columns.map(c => c.name);
+        } catch (err) {
+            console.error('Failed to fetch table structure for autocomplete:', err);
+            return [];
+        } finally {
+            pendingFetchRef.current.delete(lowerName);
+        }
     };
 
     // Register custom SQL completion provider
@@ -38,7 +121,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute
 
         // Register new completion provider
         completionProviderRef.current = monaco.languages.registerCompletionItemProvider('sql', {
-            provideCompletionItems: (model: any, position: any) => {
+            provideCompletionItems: async (model: any, position: any) => {
                 const word = model.getWordUntilPosition(position);
                 const range = {
                     startLineNumber: position.lineNumber,
@@ -48,6 +131,80 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute
                 };
 
                 const suggestions: any[] = [];
+
+                // Get full text and current line for context
+                const fullText = model.getValue();
+                const lineContent = model.getLineContent(position.lineNumber);
+                const textBeforeCursor = lineContent.substring(0, position.column - 1);
+
+                // Parse table aliases from the current SQL
+                const aliases = parseTableAliases(fullText, tables);
+
+                // Check if we're typing after a dot (alias.column pattern)
+                const dotMatch = textBeforeCursor.match(/(\w+)\.\s*$/);
+
+                if (dotMatch) {
+                    const prefix = dotMatch[1].toLowerCase();
+
+                    // Check if it's a table alias
+                    const aliasInfo = aliases.find(a => a.alias === prefix);
+                    if (aliasInfo) {
+                        // Fetch columns automatically if not cached
+                        const columns = await fetchTableColumnsIfNeeded(aliasInfo.tableName);
+                        columns.forEach(col => {
+                            suggestions.push({
+                                label: col,
+                                kind: monaco.languages.CompletionItemKind.Field,
+                                insertText: col,
+                                range,
+                                detail: `Column from ${aliasInfo.tableName}`,
+                                documentation: `Column "${col}" from table "${aliasInfo.tableName}" (alias: ${aliasInfo.alias})`,
+                                sortText: '0' + col, // Prioritize columns
+                            });
+                        });
+
+                        // Also add wildcard
+                        suggestions.push({
+                            label: '*',
+                            kind: monaco.languages.CompletionItemKind.Field,
+                            insertText: '*',
+                            range,
+                            detail: `All columns from ${aliasInfo.tableName}`,
+                            sortText: '00*',
+                        });
+
+                        return { suggestions };
+                    }
+
+                    // Check if it's a direct table name
+                    const table = tables.find(t => t.name.toLowerCase() === prefix);
+                    if (table) {
+                        // Fetch columns automatically if not cached
+                        const columns = await fetchTableColumnsIfNeeded(table.name);
+                        columns.forEach(col => {
+                            suggestions.push({
+                                label: col,
+                                kind: monaco.languages.CompletionItemKind.Field,
+                                insertText: col,
+                                range,
+                                detail: `Column from ${table.name}`,
+                                documentation: `Column "${col}" from table "${table.name}"`,
+                                sortText: '0' + col,
+                            });
+                        });
+
+                        suggestions.push({
+                            label: '*',
+                            kind: monaco.languages.CompletionItemKind.Field,
+                            insertText: '*',
+                            range,
+                            detail: `All columns from ${table.name}`,
+                            sortText: '00*',
+                        });
+
+                        return { suggestions };
+                    }
+                }
 
                 // SQL Keywords
                 const keywords = [
@@ -60,7 +217,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute
                     'NULL', 'IS', 'TRUE', 'FALSE', 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
                     'PRIMARY', 'KEY', 'FOREIGN', 'REFERENCES', 'UNIQUE', 'CHECK', 'DEFAULT',
                     'CONSTRAINT', 'CASCADE', 'RESTRICT', 'TRUNCATE', 'BEGIN', 'COMMIT', 'ROLLBACK',
-                    'UNION', 'ALL', 'EXCEPT', 'INTERSECT', 'EXISTS', 'ANY', 'SOME',
+                    'UNION', 'ALL', 'EXCEPT', 'INTERSECT', 'EXISTS', 'ANY', 'SOME', 'TOP',
                 ];
 
                 keywords.forEach(keyword => {
@@ -87,15 +244,20 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute
                     { name: 'UPPER', snippet: 'UPPER(${1:string})', detail: 'Convert to uppercase' },
                     { name: 'LOWER', snippet: 'LOWER(${1:string})', detail: 'Convert to lowercase' },
                     { name: 'NOW', snippet: 'NOW()', detail: 'Current timestamp' },
+                    { name: 'GETDATE', snippet: 'GETDATE()', detail: 'Current date/time (SQL Server)' },
                     { name: 'DATE', snippet: 'DATE(${1:datetime})', detail: 'Extract date' },
                     { name: 'YEAR', snippet: 'YEAR(${1:date})', detail: 'Extract year' },
                     { name: 'MONTH', snippet: 'MONTH(${1:date})', detail: 'Extract month' },
                     { name: 'DAY', snippet: 'DAY(${1:date})', detail: 'Extract day' },
                     { name: 'CAST', snippet: 'CAST(${1:value} AS ${2:type})', detail: 'Type conversion' },
+                    { name: 'CONVERT', snippet: 'CONVERT(${1:type}, ${2:value})', detail: 'Type conversion (SQL Server)' },
                     { name: 'ROUND', snippet: 'ROUND(${1:number}, ${2:decimals})', detail: 'Round number' },
                     { name: 'ABS', snippet: 'ABS(${1:number})', detail: 'Absolute value' },
                     { name: 'LENGTH', snippet: 'LENGTH(${1:string})', detail: 'String length' },
+                    { name: 'LEN', snippet: 'LEN(${1:string})', detail: 'String length (SQL Server)' },
                     { name: 'REPLACE', snippet: 'REPLACE(${1:string}, ${2:from}, ${3:to})', detail: 'Replace substring' },
+                    { name: 'ISNULL', snippet: 'ISNULL(${1:value}, ${2:replacement})', detail: 'Replace NULL (SQL Server)' },
+                    { name: 'IFNULL', snippet: 'IFNULL(${1:value}, ${2:replacement})', detail: 'Replace NULL (MySQL)' },
                 ];
 
                 functions.forEach(fn => {
@@ -119,6 +281,19 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute
                         range,
                         detail: `Table (${table.schema || 'public'})`,
                         documentation: `Table in schema ${table.schema || 'public'}`,
+                    });
+                });
+
+                // Add detected aliases as suggestions
+                aliases.forEach(alias => {
+                    suggestions.push({
+                        label: alias.alias,
+                        kind: monaco.languages.CompletionItemKind.Variable,
+                        insertText: alias.alias,
+                        range,
+                        detail: `Alias for ${alias.tableName}`,
+                        documentation: `Table alias "${alias.alias}" pointing to "${alias.tableName}". Type "${alias.alias}." to see columns.`,
+                        sortText: '0' + alias.alias, // Prioritize aliases
                     });
                 });
 
@@ -224,6 +399,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute
 
     const handleEditorDidMount = (editor: any, monaco: Monaco) => {
         monacoRef.current = monaco;
+        editorRef.current = editor;
 
         // Add Ctrl+Enter command
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {

@@ -39,12 +39,40 @@ pub async fn execute_query(
     sql: String,
     state: State<'_, ConnectionManager>,
 ) -> Result<QueryResult, String> {
+    // Log all queries, especially UPDATEs
+    let sql_upper = sql.trim().to_uppercase();
+    if sql_upper.starts_with("UPDATE") {
+        log::info!("[execute_query] ======= UPDATE QUERY =======");
+        log::info!("[execute_query] Connection ID: {}", id);
+        log::info!("[execute_query] SQL: {}", sql);
+    } else if sql_upper.starts_with("INSERT") || sql_upper.starts_with("DELETE") {
+        log::info!("[execute_query] Modification query: {}", sql);
+    } else {
+        log::debug!("[execute_query] Query: {}", &sql[..std::cmp::min(100, sql.len())]);
+    }
+    
     let conn = state
         .get_connection(&id)
         .await
-        .ok_or_else(|| "Connection not found".to_string())?;
+        .ok_or_else(|| {
+            log::error!("[execute_query] Connection not found: {}", id);
+            "Connection not found".to_string()
+        })?;
     
-    crate::database::execute_sql_query(&conn, &sql).await
+    let result = crate::database::execute_sql_query(&conn, &sql).await;
+    
+    match &result {
+        Ok(r) => {
+            if sql_upper.starts_with("UPDATE") {
+                log::info!("[execute_query] UPDATE successful! Row count: {}", r.row_count);
+            }
+        }
+        Err(e) => {
+            log::error!("[execute_query] Query failed: {}", e);
+        }
+    }
+    
+    result
 }
 
 #[tauri::command]

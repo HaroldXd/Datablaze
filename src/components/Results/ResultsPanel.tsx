@@ -406,24 +406,97 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
 
             // Execute actual DB update if we have connection info
             if (connectionId && tableName && localRows) {
+                console.log('[ResultsPanel] Edit context:', { connectionId, tableName, rowIndex: editingCell.rowIndex });
                 const row = localRows[editingCell.rowIndex];
-                // Try to find primary key (usually 'id')
-                const pkValue = row['id'] ?? row['ID'] ?? row['Id'];
+                console.log('[ResultsPanel] Row data:', row);
 
-                if (pkValue !== undefined) {
+                // Find primary key - check multiple common patterns
+                const pkCandidates = ['id', 'ID', 'Id', 'iD', '_id', 'pk', 'PK', 'key', 'KEY'];
+                // Also check for table-specific PK like "user_id", "users_id", etc.
+                const tableBasedPks = [
+                    `${tableName.toLowerCase()}_id`,
+                    `${tableName.toLowerCase().replace(/s$/, '')}_id`,
+                    `${tableName}Id`,
+                    `${tableName.replace(/s$/, '')}Id`
+                ];
+                const allPkCandidates = [...pkCandidates, ...tableBasedPks];
+                console.log('[ResultsPanel] PK candidates:', allPkCandidates);
+
+                let pkColumn: string | null = null;
+                let pkValue: any = undefined;
+
+                // First try common patterns
+                for (const pk of allPkCandidates) {
+                    if (row[pk] !== undefined) {
+                        pkColumn = pk;
+                        pkValue = row[pk];
+                        console.log('[ResultsPanel] Found PK via pattern:', { pkColumn, pkValue });
+                        break;
+                    }
+                }
+
+                // If not found, use the first column of the result as PK (common convention)
+                if (pkValue === undefined && result?.columns && result.columns.length > 0) {
+                    const firstCol = result.columns[0].name;
+                    if (row[firstCol] !== undefined) {
+                        pkColumn = firstCol;
+                        pkValue = row[firstCol];
+                        console.log('[ResultsPanel] Using first column as PK:', { pkColumn, pkValue });
+                    }
+                }
+
+                if (pkColumn && pkValue !== undefined) {
                     try {
-                        // Escape the value properly
-                        const escapedValue = typeof newValue === 'string'
-                            ? `'${newValue.replace(/'/g, "''")}'`
-                            : newValue === null ? 'NULL' : newValue;
+                        // Get column type info for proper formatting
+                        const colInfo = result?.columns.find(c => c.name === editingCell.colKey);
+                        const colType = (colInfo?.type_name || '').toUpperCase();
 
-                        const escapedPk = typeof pkValue === 'string'
-                            ? `'${pkValue.replace(/'/g, "''")}'`
-                            : pkValue;
+                        // Escape values properly for SQL based on data type
+                        const escapeValue = (val: any, forColumn?: string): string => {
+                            if (val === null || val === undefined || val === '') return 'NULL';
 
-                        const sql = `UPDATE ${tableName} SET ${editingCell.colKey} = ${escapedValue} WHERE id = ${escapedPk}`;
+                            // Check if it's a numeric type
+                            const numericTypes = ['INT', 'INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT',
+                                'DECIMAL', 'NUMERIC', 'FLOAT', 'DOUBLE', 'REAL', 'NUMBER'];
+                            const isNumericColumn = forColumn && numericTypes.some(t => colType.includes(t));
 
-                        await executeQuery(connectionId, sql);
+
+
+                            // Check if it's a boolean type
+                            const boolTypes = ['BOOL', 'BOOLEAN', 'BIT'];
+                            const isBoolColumn = forColumn && boolTypes.some(t => colType.includes(t));
+
+                            // Handle by detected type
+                            if (typeof val === 'number' || isNumericColumn) {
+                                // Numeric: no quotes, just validate it's a number
+                                const num = Number(val);
+                                if (!isNaN(num)) return String(num);
+                                // If not a valid number, treat as string
+                            }
+
+                            if (typeof val === 'boolean' || isBoolColumn) {
+                                // Boolean: convert to 1/0
+                                if (val === true || val === 'true' || val === '1' || val === 1) return '1';
+                                if (val === false || val === 'false' || val === '0' || val === 0) return '0';
+                            }
+
+                            // For dates, strings, and everything else: use single quotes with escaping
+                            return `'${String(val).replace(/'/g, "''")}'`;
+                        };
+
+                        const escapedValue = escapeValue(newValue, editingCell.colKey);
+                        const escapedPk = escapeValue(pkValue);
+
+                        const sql = `UPDATE ${tableName} SET ${editingCell.colKey} = ${escapedValue} WHERE ${pkColumn} = ${escapedPk}`;
+
+                        console.log('[ResultsPanel] ======= EXECUTING UPDATE =======');
+                        console.log('[ResultsPanel] SQL:', sql);
+                        console.log('[ResultsPanel] Column:', editingCell.colKey);
+                        console.log('[ResultsPanel] Old value:', oldValue);
+                        console.log('[ResultsPanel] New value:', newValue);
+
+                        const updateResult = await executeQuery(connectionId, sql);
+                        console.log('[ResultsPanel] Update result:', updateResult);
 
                         setCellEditFeedback({
                             type: 'success',
@@ -450,6 +523,8 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                     }
                 } else {
                     // No primary key found, just show local update message
+                    console.warn('[ResultsPanel] No PK found! Cannot save to database.');
+                    console.log('[ResultsPanel] Row keys:', Object.keys(row));
                     setCellEditFeedback({
                         type: 'success',
                         message: `✓ Updated locally (no PK found for DB save)`
@@ -457,6 +532,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                 }
             } else {
                 // No connection/table info, show local update
+                console.warn('[ResultsPanel] Missing connection info:', { connectionId, tableName, hasLocalRows: !!localRows });
                 setCellEditFeedback({
                     type: 'success',
                     message: `✓ "${editingCell.colKey}" updated (local only)`
@@ -1079,7 +1155,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                 )}
 
                 {viewMode === 'json' && (
-                    <JsonViewer data={paginatedRows} />
+                    <JsonViewer data={paginatedRows} columnOrder={result?.columns.map(c => c.name)} />
                 )}
             </div>
 

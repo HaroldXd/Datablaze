@@ -103,7 +103,10 @@ pub async fn connect(config: &ConnectionConfig) -> Result<SqlServerPool, String>
     let manager = ConnectionManager::new(tiberius_config);
     
     match Pool::builder()
-        .max_size(5)
+        .max_size(10) // Increased from 5
+        .min_idle(Some(1)) // Keep at least 1 connection ready
+        .connection_timeout(std::time::Duration::from_secs(10)) // Timeout for getting connection
+        .idle_timeout(Some(std::time::Duration::from_secs(60))) // Close idle connections after 60s
         .build(manager)
         .await {
         Ok(pool) => {
@@ -249,6 +252,34 @@ pub async fn execute_query(pool: &SqlServerPool, sql: &str) -> Result<QueryResul
     let start = Instant::now();
     let mut conn = pool.get().await.map_err(|e| format!("Failed to get connection: {}", e))?;
     
+    let sql_upper = sql.trim().to_uppercase();
+    
+    // For UPDATE, INSERT, DELETE - use execute which returns affected rows
+    if sql_upper.starts_with("UPDATE") || sql_upper.starts_with("INSERT") || sql_upper.starts_with("DELETE") {
+        info!("SQL Server: Executing modification query");
+        
+        // Execute the query and get total affected rows
+        let result = conn.execute(sql, &[]).await
+            .map_err(|e| format!("Query execution failed: {}", e))?;
+        
+        let affected = result.total();
+        info!("SQL Server: {} rows affected", affected);
+        
+        let execution_time = start.elapsed().as_millis() as u64;
+        
+        return Ok(QueryResult {
+            columns: vec![ResultColumn {
+                name: "affected_rows".to_string(),
+                type_name: "BIGINT".to_string(),
+            }],
+            rows: vec![serde_json::json!({"affected_rows": affected})],
+            row_count: affected as usize,
+            execution_time_ms: execution_time,
+            truncated: false,
+        });
+    }
+    
+    // For SELECT queries, use simple_query
     let stream = conn.simple_query(sql).await
         .map_err(|e| format!("Query execution failed: {}", e))?;
     

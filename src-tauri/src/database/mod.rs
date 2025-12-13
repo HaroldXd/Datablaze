@@ -33,7 +33,13 @@ impl ConnectionManager {
 
     pub async fn remove_connection(&self, id: &str) -> bool {
         let mut conns = self.connections.lock().await;
-        conns.remove(id).is_some()
+        let removed = conns.remove(id).is_some();
+        if removed {
+            log::info!("[ConnectionManager] Removed connection: {}", id);
+        } else {
+            log::warn!("[ConnectionManager] Connection not found to remove: {}", id);
+        }
+        removed
     }
 
     pub async fn get_connection(&self, id: &str) -> Option<DatabaseConnection> {

@@ -4,6 +4,7 @@ import { ChevronRight, ChevronDown } from 'lucide-react';
 interface JsonViewerProps {
     data: unknown;
     initialExpanded?: boolean;
+    columnOrder?: string[]; // Optional column order to preserve DB column order
 }
 
 interface JsonNodeProps {
@@ -11,9 +12,41 @@ interface JsonNodeProps {
     value: unknown;
     depth: number;
     isLast: boolean;
+    columnOrder?: string[];
 }
 
-const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth, isLast }) => {
+// Helper to order object keys according to columnOrder
+function orderObjectKeys(obj: object, columnOrder?: string[]): [string, any][] {
+    const entries = Object.entries(obj);
+
+    if (!columnOrder || columnOrder.length === 0) {
+        return entries;
+    }
+
+    // Create a map for quick lookup of column order index
+    const orderMap = new Map<string, number>();
+    columnOrder.forEach((col, index) => {
+        orderMap.set(col.toLowerCase(), index);
+    });
+
+    // Sort entries by their order in columnOrder
+    return entries.sort((a, b) => {
+        const aIndex = orderMap.get(a[0].toLowerCase());
+        const bIndex = orderMap.get(b[0].toLowerCase());
+
+        // If both are in columnOrder, sort by their order
+        if (aIndex !== undefined && bIndex !== undefined) {
+            return aIndex - bIndex;
+        }
+        // If only one is in columnOrder, it comes first
+        if (aIndex !== undefined) return -1;
+        if (bIndex !== undefined) return 1;
+        // If neither is in columnOrder, maintain original order
+        return 0;
+    });
+}
+
+const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth, isLast, columnOrder }) => {
     const [isExpanded, setIsExpanded] = useState(depth < 2);
 
     const indent = depth * 20;
@@ -73,6 +106,9 @@ const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth, isLast }) =>
         );
     }
 
+    // Get ordered entries for objects
+    const orderedEntries = !isArray ? orderObjectKeys(value as object, columnOrder) : null;
+
     return (
         <div className="json-node">
             <div
@@ -111,16 +147,18 @@ const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth, isLast }) =>
                                 value={item}
                                 depth={depth + 1}
                                 isLast={index === length - 1}
+                                columnOrder={columnOrder}
                             />
                         ))
                     ) : (
-                        Object.entries(value as object).map(([key, val], index) => (
+                        orderedEntries!.map(([key, val], index) => (
                             <JsonNode
                                 key={key}
                                 keyName={key}
                                 value={val}
                                 depth={depth + 1}
                                 isLast={index === length - 1}
+                                columnOrder={columnOrder}
                             />
                         ))
                     )}
@@ -134,10 +172,10 @@ const JsonNode: React.FC<JsonNodeProps> = ({ keyName, value, depth, isLast }) =>
     );
 };
 
-export const JsonViewer: React.FC<JsonViewerProps> = ({ data }) => {
+export const JsonViewer: React.FC<JsonViewerProps> = ({ data, columnOrder }) => {
     return (
         <div className="json-viewer-container">
-            <JsonNode value={data} depth={0} isLast={true} />
+            <JsonNode value={data} depth={0} isLast={true} columnOrder={columnOrder} />
         </div>
     );
 };

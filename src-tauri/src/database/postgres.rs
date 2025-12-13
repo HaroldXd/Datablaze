@@ -134,6 +134,34 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
     println!("[DEBUG postgres] execute_query starting: {}", sql);
     let start = Instant::now();
     
+    let sql_upper = sql.trim().to_uppercase();
+    
+    // For UPDATE, INSERT, DELETE - use execute which returns affected rows
+    if sql_upper.starts_with("UPDATE") || sql_upper.starts_with("INSERT") || sql_upper.starts_with("DELETE") {
+        log::info!("PostgreSQL: Executing modification query: {}", sql);
+        
+        let result = sqlx::query(sql)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Query execution failed: {}", e))?;
+        
+        let affected = result.rows_affected();
+        log::info!("PostgreSQL: {} rows affected", affected);
+        
+        let execution_time = start.elapsed().as_millis() as u64;
+        
+        return Ok(QueryResult {
+            columns: vec![ResultColumn {
+                name: "affected_rows".to_string(),
+                type_name: "BIGINT".to_string(),
+            }],
+            rows: vec![serde_json::json!({"affected_rows": affected})],
+            row_count: affected as usize,
+            execution_time_ms: execution_time,
+            truncated: false,
+        });
+    }
+    
     // Use streaming to prevent loading too much data into memory
     use futures::TryStreamExt;
     let mut rows = Vec::new();

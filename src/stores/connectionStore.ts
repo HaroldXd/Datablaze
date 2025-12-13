@@ -1,12 +1,13 @@
 import { create } from 'zustand';
-import { Connection, TableInfo, QueryResult } from '../lib/tauri';
-import { getSavedConnections, saveConnection, removeSavedConnection, SavedConnection, cleanupDuplicates, getSavedQueries, saveQuery, removeSavedQuery, SavedQuery } from '../lib/storage';
+import { Connection, TableInfo, QueryResult, TableStructure } from '../lib/tauri';
+import { getSavedConnections, saveConnection, removeSavedConnection, SavedConnection, cleanupDuplicates, getSavedQueries, saveQuery, removeSavedQuery, SavedQuery, getAppState, saveAppState } from '../lib/storage';
 
 interface QueryTab {
     id: string;
     title: string;
     sql: string;
     connectionId: string | null;
+    connectionName?: string; // Name of the connection for persistence
     type?: 'query' | 'structure';
     tableName?: string;
     result?: QueryResult | null;
@@ -20,6 +21,7 @@ interface ConnectionState {
     savedQueries: SavedQuery[];
     activeConnectionId: string | null;
     tables: TableInfo[];
+    tableStructures: Record<string, TableStructure>; // Cache for table column info
     queryTabs: QueryTab[];
     activeTabId: string | null;
     isConnecting: boolean;
@@ -28,11 +30,15 @@ interface ConnectionState {
     // Actions
     loadSavedConnections: () => void;
     loadSavedQueries: () => void;
+    loadAppState: () => void;
+    persistTabsState: () => void;
     addConnection: (connection: Connection, persist?: boolean, savePassword?: boolean) => void;
     removeConnection: (id: string) => void;
     removeSavedConnectionById: (id: string) => void;
     setActiveConnection: (id: string | null) => void;
     setTables: (tables: TableInfo[]) => void;
+    setTableStructure: (tableName: string, structure: TableStructure) => void;
+    getTableColumns: (tableName: string) => string[];
     addQueryTab: () => void;
     removeQueryTab: (id: string) => void;
     setActiveTab: (id: string) => void;
@@ -46,7 +52,9 @@ interface ConnectionState {
     updateTabResult: (id: string, result: QueryResult | null, isExecuting: boolean, error: string | null) => void;
 }
 
-let tabCounter = 1;
+// Load initial tabCounter from saved state
+const savedState = getAppState();
+let tabCounter = savedState.tabCounter || 1;
 
 // Helper function to generate tab title from SQL
 function generateTabTitle(sql: string): string {
@@ -133,16 +141,74 @@ function generateTabTitle(sql: string): string {
     return firstWord.length > 15 ? firstWord.substring(0, 15) + '...' : firstWord;
 }
 
-export const useConnectionStore = create<ConnectionState>((set) => ({
+// Helper to persist tabs state
+function saveTabsState(tabs: QueryTab[], activeTabId: string | null, connections: Connection[]) {
+    const tabsToSave = tabs.map(t => {
+        // Get connection name from the current connection if available
+        let connectionName = t.connectionName;
+        if (t.connectionId && !connectionName) {
+            const conn = connections.find(c => c.id === t.connectionId);
+            if (conn) {
+                connectionName = conn.config.name;
+            }
+        }
+        return {
+            id: t.id,
+            title: t.title,
+            sql: t.sql,
+            type: t.type,
+            tableName: t.tableName,
+            connectionName,
+        };
+    });
+    saveAppState({
+        queryTabs: tabsToSave,
+        activeTabId,
+        tabCounter,
+    });
+}
+
+export const useConnectionStore = create<ConnectionState>((set, get) => ({
     connections: [],
     savedConnections: [],
     savedQueries: [],
     activeConnectionId: null,
     tables: [],
+    tableStructures: {},
     queryTabs: [{ id: 'tab-1', title: 'Query 1', sql: '', connectionId: null }],
     activeTabId: 'tab-1',
     isConnecting: false,
     error: null,
+
+    loadAppState: () => {
+        const appState = getAppState();
+
+        // Restore tab counter
+        tabCounter = appState.tabCounter || 1;
+
+        // Restore tabs if we have any saved
+        if (appState.queryTabs && appState.queryTabs.length > 0) {
+            const restoredTabs: QueryTab[] = appState.queryTabs.map(t => ({
+                id: t.id,
+                title: t.title,
+                sql: t.sql,
+                connectionId: null,
+                connectionName: t.connectionName, // Restore connection name
+                type: t.type,
+                tableName: t.tableName,
+            }));
+
+            set({
+                queryTabs: restoredTabs,
+                activeTabId: appState.activeTabId || restoredTabs[0]?.id || null,
+            });
+        }
+    },
+
+    persistTabsState: () => {
+        const state = get();
+        saveTabsState(state.queryTabs, state.activeTabId, state.connections);
+    },
 
     loadSavedConnections: () => {
         cleanupDuplicates(); // Clean duplicates on load
@@ -191,6 +257,12 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
                 newConnections = [...state.connections, connection];
             }
 
+            // Save last active connection name and database for state persistence
+            saveAppState({
+                lastActiveConnectionName: connection.config.name,
+                lastActiveDatabase: connection.config.database || null
+            });
+
             return {
                 connections: newConnections,
                 // Only reload saved connections if we actually saved/persisted something or if we want to ensure sync
@@ -218,6 +290,24 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
 
     setTables: (tables) => set({ tables }),
 
+    setTableStructure: (tableName, structure) => {
+        set((state) => ({
+            tableStructures: {
+                ...state.tableStructures,
+                [tableName.toLowerCase()]: structure,
+            },
+        }));
+    },
+
+    getTableColumns: (tableName) => {
+        const state = get();
+        const structure = state.tableStructures[tableName.toLowerCase()];
+        if (structure && structure.columns) {
+            return structure.columns.map(c => c.name);
+        }
+        return [];
+    },
+
     addQueryTab: () => {
         tabCounter++;
         const newTab: QueryTab = {
@@ -226,30 +316,43 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
             sql: '',
             connectionId: null,
         };
-        set((state) => ({
-            queryTabs: [...state.queryTabs, newTab],
-            activeTabId: newTab.id,
-        }));
+        set((state) => {
+            const newTabs = [...state.queryTabs, newTab];
+            // Persist after adding
+            setTimeout(() => saveTabsState(newTabs, newTab.id, state.connections), 0);
+            return {
+                queryTabs: newTabs,
+                activeTabId: newTab.id,
+            };
+        });
     },
 
     removeQueryTab: (id) =>
         set((state) => {
-            const tabs = state.queryTabs.filter((t) => t.id !== id);
+            let tabs = state.queryTabs.filter((t) => t.id !== id);
             if (tabs.length === 0) {
                 tabCounter++;
                 tabs.push({ id: `tab-${tabCounter}`, title: `Query ${tabCounter}`, sql: '', connectionId: null });
             }
+            const newActiveTabId = state.activeTabId === id ? tabs[tabs.length - 1].id : state.activeTabId;
+            // Persist after removing
+            setTimeout(() => saveTabsState(tabs, newActiveTabId, state.connections), 0);
             return {
                 queryTabs: tabs,
-                activeTabId: state.activeTabId === id ? tabs[tabs.length - 1].id : state.activeTabId,
+                activeTabId: newActiveTabId,
             };
         }),
 
-    setActiveTab: (id) => set({ activeTabId: id }),
+    setActiveTab: (id) => {
+        set({ activeTabId: id });
+        // Persist active tab change
+        const state = get();
+        setTimeout(() => saveTabsState(state.queryTabs, id, state.connections), 0);
+    },
 
     updateTabSql: (id, sql, tableName?) =>
-        set((state) => ({
-            queryTabs: state.queryTabs.map((t) => {
+        set((state) => {
+            const newTabs = state.queryTabs.map((t) => {
                 if (t.id === id) {
                     // Only update title if it's a generic "Query N" title or if SQL changes significantly
                     const shouldUpdateTitle = t.title.match(/^Query \d+$/) || !t.sql.trim();
@@ -257,13 +360,25 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
                     return { ...t, sql, title: newTitle, tableName: tableName ?? t.tableName };
                 }
                 return t;
-            }),
-        })),
+            });
+            // Debounced persist - only persist when SQL has content
+            if (sql.trim()) {
+                setTimeout(() => saveTabsState(newTabs, state.activeTabId, state.connections), 500);
+            }
+            return { queryTabs: newTabs };
+        }),
 
     updateTabConnection: (id, connectionId) =>
-        set((state) => ({
-            queryTabs: state.queryTabs.map((t) => (t.id === id ? { ...t, connectionId } : t)),
-        })),
+        set((state) => {
+            const conn = state.connections.find(c => c.id === connectionId);
+            const connectionName = conn?.config.name;
+            const newTabs = state.queryTabs.map((t) =>
+                t.id === id ? { ...t, connectionId, connectionName } : t
+            );
+            // Persist connection association
+            setTimeout(() => saveTabsState(newTabs, state.activeTabId, state.connections), 0);
+            return { queryTabs: newTabs };
+        }),
 
     setConnecting: (connecting) => set({ isConnecting: connecting }),
 
@@ -279,10 +394,15 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
             type: 'structure',
             tableName
         };
-        set((state) => ({
-            queryTabs: [...state.queryTabs, newTab],
-            activeTabId: newTab.id,
-        }));
+        set((state) => {
+            const newTabs = [...state.queryTabs, newTab];
+            // Persist after adding
+            setTimeout(() => saveTabsState(newTabs, newTab.id, state.connections), 0);
+            return {
+                queryTabs: newTabs,
+                activeTabId: newTab.id,
+            };
+        });
     },
 
     updateTabResult: (id, result, isExecuting, error) =>
@@ -292,3 +412,4 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
             ),
         })),
 }));
+

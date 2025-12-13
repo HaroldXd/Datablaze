@@ -137,3 +137,69 @@ export function removeSavedQuery(id: string): void {
         console.error('Failed to remove saved query:', error);
     }
 }
+
+// ============================================
+// App State Persistence
+// ============================================
+
+const APP_STATE_KEY = 'datablaze_app_state';
+
+export interface SavedTab {
+    id: string;
+    title: string;
+    sql: string;
+    type?: 'query' | 'structure';
+    tableName?: string;
+    connectionName?: string; // Name of the connection this tab was associated with
+}
+
+export interface AppState {
+    queryTabs: SavedTab[];
+    activeTabId: string | null;
+    lastActiveConnectionName: string | null;
+    lastActiveDatabase: string | null; // The specific database within the connection
+    editorHeight: number;
+    leftSidebarWidth: number;
+    theme: 'dark' | 'light';
+    tabCounter: number;
+}
+
+const DEFAULT_APP_STATE: AppState = {
+    queryTabs: [{ id: 'tab-1', title: 'Query 1', sql: '' }],
+    activeTabId: 'tab-1',
+    lastActiveConnectionName: null,
+    lastActiveDatabase: null,
+    editorHeight: 300,
+    leftSidebarWidth: 280,
+    theme: 'dark',
+    tabCounter: 1,
+};
+
+export function getAppState(): AppState {
+    try {
+        const data = localStorage.getItem(APP_STATE_KEY);
+        if (data) {
+            const parsed = JSON.parse(data);
+            // Merge with defaults to ensure all fields exist
+            return { ...DEFAULT_APP_STATE, ...parsed };
+        }
+    } catch (error) {
+        console.error('Failed to load app state:', error);
+    }
+    return DEFAULT_APP_STATE;
+}
+
+export function saveAppState(state: Partial<AppState>): void {
+    try {
+        const currentState = getAppState();
+        const newState = { ...currentState, ...state };
+        localStorage.setItem(APP_STATE_KEY, JSON.stringify(newState));
+    } catch (error) {
+        console.error('Failed to save app state:', error);
+    }
+}
+
+export function clearAppState(): void {
+    localStorage.removeItem(APP_STATE_KEY);
+}
+

@@ -20,6 +20,7 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
         tables,
         setActiveConnection,
         setTables,
+        setTableStructure,
         removeConnection,
         removeSavedConnectionById,
         addConnection,
@@ -63,16 +64,35 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
     const prevActiveConnectionIdRef = React.useRef<string | null>(null);
     const latestDbSelectRequest = React.useRef<string>('');
 
-    // Sync expandedDatabases with active connection ONLY when it changes
+    // Sync expandedDatabases and expandedConnections with active connection
     useEffect(() => {
         if (activeConnectionId && activeConnectionId !== prevActiveConnectionIdRef.current) {
             const activeConn = connections.find(c => c.id === activeConnectionId);
-            if (activeConn?.config.database) {
-                setExpandedDatabases(prev => new Set(prev).add(activeConn.config.database!));
+            if (activeConn) {
+                // Expand the database node if connected to a specific database
+                if (activeConn.config.database) {
+                    setExpandedDatabases(prev => new Set(prev).add(activeConn.config.database!));
+                }
+
+                // Find and expand the matching saved connection
+                const matchingSaved = savedConnections.find(s =>
+                    s.config.host === activeConn.config.host &&
+                    s.config.port === activeConn.config.port &&
+                    s.config.db_type === activeConn.config.db_type
+                );
+                if (matchingSaved) {
+                    setExpandedConnections(prev => new Set(prev).add(matchingSaved.id));
+                }
+
+                // Auto-expand first schema
+                if (tables.length > 0) {
+                    const firstSchema = tables[0].schema;
+                    setExpandedSchemas(prev => new Set(prev).add(firstSchema));
+                }
             }
         }
         prevActiveConnectionIdRef.current = activeConnectionId;
-    }, [activeConnectionId, connections]);
+    }, [activeConnectionId, connections, savedConnections, tables]);
 
     // ... (existing code)
 
@@ -149,16 +169,18 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                 return;
             }
 
+            console.log('[DatabaseTree] Setting tables for', dbName, '- count:', fetchedTables.length);
             setTables(fetchedTables);
 
             // Close all other databases and open only the new one
             setExpandedDatabases(new Set([dbName]));
+            console.log('[DatabaseTree] Expanded database set to:', dbName);
 
             // Auto-expand the first schema and scroll to it
             if (fetchedTables.length > 0) {
                 const firstSchema = fetchedTables[0].schema;
                 setExpandedSchemas(new Set([firstSchema]));
-                
+
                 // Scroll to the schema after a short delay to ensure DOM is updated
                 setTimeout(() => {
                     const schemaElement = schemaRefs.current[firstSchema];
@@ -448,7 +470,7 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
         if (!contextMenu || !activeConnectionId) return;
         const activeConn = connections.find(c => c.id === activeConnectionId);
         const isSqlServer = activeConn?.config.db_type === 'SQLServer';
-        const sql = isSqlServer 
+        const sql = isSqlServer
             ? `SELECT TOP 100 * FROM ${contextMenu.table};`
             : `SELECT * FROM ${contextMenu.table} LIMIT 100;`;
         addQueryTab();
@@ -523,6 +545,8 @@ export const DatabaseTree: React.FC<DatabaseTreeProps> = ({ onTableDataRequest, 
                 try {
                     const structure = await getTableStructure(activeConnectionId, tableName);
                     setTableStructures(prev => ({ ...prev, [tableName]: structure }));
+                    // Also save to global store for autocomplete access
+                    setTableStructure(tableName, structure);
                 } catch (err) {
                     console.error('Failed to load table structure', err);
                 } finally {

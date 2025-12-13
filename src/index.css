@@ -600,26 +600,87 @@ button,
   align-items: center;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
-  padding: 0 12px;
+  padding: 0 8px;
   height: 42px;
-  gap: 4px;
-  overflow-x: auto;
+  gap: 2px;
   flex-shrink: 0;
+  position: relative;
+}
+
+/* Container for scrollable tabs */
+.tabs-scroll-container {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  flex: 1;
+  scrollbar-width: none;
+  /* Firefox */
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scroll-behavior: smooth;
+  padding: 4px 0;
+  mask-image: linear-gradient(to right, transparent, black 24px, black calc(100% - 24px), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 24px, black calc(100% - 24px), transparent);
+}
+
+.tabs-scroll-container::-webkit-scrollbar {
+  display: none;
+  /* Chrome, Safari, Opera */
+}
+
+/* Scroll buttons */
+.tabs-scroll-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 28px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.tabs-scroll-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent-primary);
+  opacity: 1;
+}
+
+.tabs-scroll-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 .tab {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
+  gap: 6px;
+  padding: 6px 12px;
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   border-radius: 6px 6px 0 0;
   transition: all 0.15s ease;
   white-space: nowrap;
+  min-width: 80px;
+  max-width: 180px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.tab .tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
 }
 
 .tab:hover {
@@ -628,11 +689,29 @@ button,
 }
 
 .tab.active {
-  background: var(--bg-primary);
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.15) 0%, var(--bg-primary) 100%);
   color: var(--text-primary);
-  border-bottom: 2px solid var(--accent-primary);
+  font-weight: 600;
+  border-bottom: 3px solid var(--accent-primary);
+  box-shadow: 0 -2px 8px rgba(99, 102, 241, 0.2);
 }
 
+.tab.active .tab-icon {
+  color: var(--accent-primary);
+}
+
+.tab.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent-primary);
+  border-radius: 2px 2px 0 0;
+}
+
+/* Tab close button - hidden by default, shown on hover */
 .tab-close {
   display: flex;
   align-items: center;
@@ -640,12 +719,19 @@ button,
   width: 16px;
   height: 16px;
   border-radius: 4px;
-  opacity: 0.5;
+  opacity: 0;
   transition: all 0.15s ease;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.tab:hover .tab-close,
+.tab.active .tab-close {
+  opacity: 0.5;
 }
 
 .tab-close:hover {
-  opacity: 1;
+  opacity: 1 !important;
   background: var(--error);
   color: white;
 }
@@ -657,7 +743,49 @@ button,
   background: var(--accent-primary);
   border-radius: 50%;
   flex-shrink: 0;
-  margin-left: -4px;
+  margin-left: -2px;
+  animation: pulse-unsaved 2s ease-in-out infinite;
+}
+
+@keyframes pulse-unsaved {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Tab icon */
+.tab-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.tab.active .tab-icon {
+  opacity: 1;
+  color: var(--accent-primary);
+}
+
+/* Connection indicator badge */
+.tab-connection-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 4px;
+  background: rgba(99, 102, 241, 0.15);
+  border-radius: 3px;
+  color: var(--accent-primary);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.tab.active .tab-connection-badge {
+  opacity: 1;
+  background: rgba(99, 102, 241, 0.25);
 }
 
 .add-tab {
@@ -667,16 +795,36 @@ button,
   width: 28px;
   height: 28px;
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--text-muted);
   cursor: pointer;
   border-radius: 6px;
   transition: all 0.15s ease;
+  flex-shrink: 0;
+  margin-left: 4px;
 }
 
 .add-tab:hover {
   background: var(--bg-hover);
   color: var(--accent-primary);
+  border-color: var(--border-color);
+}
+
+/* Tab count badge */
+.tabs-count-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  background: var(--bg-tertiary);
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-left: 4px;
+  flex-shrink: 0;
 }
 
 .editor-area {

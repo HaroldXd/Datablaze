@@ -99,19 +99,27 @@ pub async fn get_table_structure(pool: &SqlitePool, table: &str) -> Result<Table
     
     let columns: Vec<ColumnInfo> = rows
         .iter()
-        .map(|row| ColumnInfo {
-            name: row.get("name"),
-            data_type: row.get("type"),
-            is_nullable: row.get::<i32, _>("notnull") == 0,
-            is_primary_key: row.get::<i32, _>("pk") > 0,
-            default_value: row.get("dflt_value"),
-            is_unique: None,
-            is_foreign_key: None,
-            foreign_key_table: None,
-            foreign_key_column: None,
-            is_auto_increment: None,
-            max_length: None,
-            check_constraint: None,
+        .map(|row| {
+            let name: String = row.try_get("name").unwrap_or_default();
+            let data_type: String = row.try_get("type").unwrap_or_default();
+            let notnull: i32 = row.try_get("notnull").unwrap_or(0);
+            let pk: i32 = row.try_get("pk").unwrap_or(0);
+            let default_value: Option<String> = row.try_get("dflt_value").ok();
+            
+            ColumnInfo {
+                name,
+                data_type,
+                is_nullable: notnull == 0,
+                is_primary_key: pk > 0,
+                default_value,
+                is_unique: None,
+                is_foreign_key: None,
+                foreign_key_table: None,
+                foreign_key_column: None,
+                is_auto_increment: None,
+                max_length: None,
+                check_constraint: None,
+            }
         })
         .collect();
     
@@ -124,6 +132,35 @@ pub async fn get_table_structure(pool: &SqlitePool, table: &str) -> Result<Table
 pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     
+    let sql_upper = sql.trim().to_uppercase();
+    
+    // For UPDATE, INSERT, DELETE - use execute which returns affected rows
+    if sql_upper.starts_with("UPDATE") || sql_upper.starts_with("INSERT") || sql_upper.starts_with("DELETE") {
+        log::info!("SQLite: Executing modification query: {}", sql);
+        
+        let result = sqlx::query(sql)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Query execution failed: {}", e))?;
+        
+        let affected = result.rows_affected();
+        log::info!("SQLite: {} rows affected", affected);
+        
+        let execution_time = start.elapsed().as_millis() as u64;
+        
+        return Ok(QueryResult {
+            columns: vec![ResultColumn {
+                name: "affected_rows".to_string(),
+                type_name: "INTEGER".to_string(),
+            }],
+            rows: vec![serde_json::json!({"affected_rows": affected})],
+            row_count: affected as usize,
+            execution_time_ms: execution_time,
+            truncated: false,
+        });
+    }
+    
+    // For SELECT queries
     let rows = sqlx::query(sql)
         .fetch_all(pool)
         .await
@@ -186,8 +223,29 @@ fn row_value_to_json(row: &sqlx::sqlite::SqliteRow, idx: usize) -> serde_json::V
     if let Ok(v) = row.try_get::<bool, _>(idx) {
         return serde_json::Value::Bool(v);
     }
+    // Date and Time types - SQLite stores as TEXT but sqlx can decode them
+    if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(idx) {
+        return serde_json::Value::String(v.format("%Y-%m-%d").to_string());
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(idx) {
+        return serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S").to_string());
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveTime, _>(idx) {
+        return serde_json::Value::String(v.format("%H:%M:%S").to_string());
+    }
+    if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(idx) {
+        return serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S").to_string());
+    }
+    // Strings
     if let Ok(v) = row.try_get::<String, _>(idx) {
         return serde_json::Value::String(v);
+    }
+    // Try bytes (BLOB) - convert to string if valid UTF-8, otherwise hex
+    if let Ok(v) = row.try_get::<Vec<u8>, _>(idx) {
+        if let Ok(s) = String::from_utf8(v.clone()) {
+            return serde_json::Value::String(s);
+        }
+        return serde_json::Value::String(format!("0x{}", hex::encode(v)));
     }
     if let Ok(v) = row.try_get::<serde_json::Value, _>(idx) {
         return v;
